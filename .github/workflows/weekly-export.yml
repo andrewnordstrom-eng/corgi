@@ -136,7 +136,7 @@ jobs:
           ssh $SSH_STRICT_OPTS "${VPS_USER}@${VPS_HOST}" "rm -rf ${REMOTE_EXPORT_DIR}"
 
       - name: Upload exports
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
           name: weekly-export-${{ github.run_number }}
           path: data/exports/
