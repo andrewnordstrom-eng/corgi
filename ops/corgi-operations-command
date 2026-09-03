@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+export LC_ALL=C
+
+readonly OPERATIONS_HOME='/var/lib/corgi-operations'
+readonly EPOCH_CLI='/opt/bluesky-feed/cli/dist/index.js'
+readonly REDIS_READER='/usr/local/libexec/corgi-read-feed-updated-at'
+readonly COMMAND_TIMEOUT='15s'
+readonly INPUT_TIMEOUT_SECONDS='5'
+readonly MAX_DATABASE_URL_BYTES='4096'
+
+deny() {
+  printf '%s\n' "corgi-operations: command denied: ${SSH_ORIGINAL_COMMAND:-<empty>}" >&2
+  exit 64
+}
+
+read_database_url() {
+  local database_url=''
+  local extra_input=''
+  local read_status=0
+
+  if IFS= read -r -t "$INPUT_TIMEOUT_SECONDS" -n "$((MAX_DATABASE_URL_BYTES + 2))" database_url; then
+    :
+  else
+    read_status="$?"
+    printf '%s\n' 'corgi-operations: epoch-status requires one newline-terminated database URL within five seconds' >&2
+    return 65
+  fi
+  if [[ "${#database_url}" -gt "$MAX_DATABASE_URL_BYTES" ]]; then
+    printf '%s\n' "corgi-operations: epoch-status database URL exceeds ${MAX_DATABASE_URL_BYTES} bytes" >&2
+    return 65
+  fi
+
+  if IFS= read -r -t "$INPUT_TIMEOUT_SECONDS" -n 1 extra_input; then
+    printf '%s\n' 'corgi-operations: epoch-status accepts exactly one input line' >&2
+    return 65
+  fi
+  read_status="$?"
+  if [[ -n "$extra_input" ]]; then
+    printf '%s\n' 'corgi-operations: epoch-status accepts exactly one input line' >&2
+    return 65
+  fi
+  if [[ "$read_status" -gt 128 ]]; then
+    printf '%s\n' 'corgi-operations: epoch-status input did not close before the deadline' >&2
+    return 65
+  fi
+
+  printf '%s' "$database_url"
+}
+
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  epoch-status)
+    database_url="$(read_database_url)"
+    case "$database_url" in
+      postgres://*|postgresql://*) ;;
+      *)
+        printf '%s\n' 'corgi-operations: epoch-status rejected an invalid database URL scheme' >&2
+        exit 65
+        ;;
+    esac
+    exec /usr/bin/env -i \
+      HOME="$OPERATIONS_HOME" \
+      NODE_ENV=production \
+      PATH=/usr/bin:/bin \
+      DATABASE_URL="$database_url" \
+      /usr/bin/timeout --foreground "$COMMAND_TIMEOUT" \
+      /usr/bin/node "$EPOCH_CLI" epoch status --direct --json
+    ;;
+  disk-root)
+    exec /usr/bin/df -P /
+    ;;
+  health-ready)
+    exec /usr/bin/curl --fail --silent --show-error --max-time 10 \
+      http://127.0.0.1:3001/health/ready
+    ;;
+  feed-updated-at)
+    exec /usr/bin/sudo -n -- "$REDIS_READER"
+    ;;
+  *)
+    deny
+    ;;
+esac
