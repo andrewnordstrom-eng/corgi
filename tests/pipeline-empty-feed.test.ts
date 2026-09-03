@@ -81,6 +81,7 @@ vi.mock('../src/lib/logger.js', () => ({
 
 import { runScoringPipeline, __resetPipelineState } from '../src/scoring/pipeline.js';
 import { config } from '../src/config.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 
 function makeEpochRow() {
   return {
@@ -148,6 +149,8 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       del: pipelineDelMock.mockReturnThis(),
       expire: pipelineExpireMock.mockReturnThis(),
       zadd: pipelineZaddMock.mockReturnThis(),
+      rpush: vi.fn().mockReturnThis(),
+      hset: vi.fn().mockReturnThis(),
       set: pipelineSetMock.mockReturnThis(),
       exec: pipelineExecMock.mockResolvedValue(
         Array.from({ length: 19 }, () => [null, 'OK'] as [null, string])
@@ -313,7 +316,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -321,7 +324,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 50,
-        }],
+        })],
       })
       .mockResolvedValueOnce({ rows: [] });
     getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
@@ -349,32 +352,61 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       '1'
     );
     expect(pipelineSetMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^feed:staging:metadata:.*:6$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:10$/),
       '1'
     );
-    expect(redisEvalMock).toHaveBeenCalledWith(
-      expect.stringContaining("redis.call('EXISTS'"),
-      18,
-      expect.stringMatching(/^feed:staging:current:/),
-      expect.stringMatching(/^feed:staging:last_known_good:/),
-      expect.stringMatching(/^feed:staging:metadata:.*:0$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:1$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:2$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:3$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:4$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:5$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:6$/),
-      'feed:current',
-      'feed:last_known_good',
-      'feed:epoch',
-      'feed:run_id',
-      'feed:updated_at',
-      'feed:count',
-      'feed:last_known_good_epoch',
-      'feed:last_known_good_run_id',
-      'feed:last_known_good_count',
-      '9'
+    expect(pipelineSetMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^feed:staging:metadata:.*:14$/),
+      expect.stringMatching(/^[0-9a-f]{40}$/)
     );
+    expect(pipelineSetMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^feed:staging:metadata:.*:15$/),
+      expect.stringMatching(/^[0-9a-f]{40}$/)
+    );
+    const publishArgs = redisEvalMock.mock.calls[0] as unknown[];
+    expect(publishArgs[0]).toEqual(expect.stringContaining("redis.call('EXISTS'"));
+    expect(publishArgs[0]).toEqual(expect.stringContaining('redis.sha1hex'));
+    expect(publishArgs[0]).toEqual(expect.stringContaining(
+      'validateProjection(1, 3, 5, 7, 9, 23)'
+    ));
+    expect(publishArgs[0]).toEqual(expect.stringContaining(
+      'validateProjection(2, 4, 6, 8, 16, 24)'
+    ));
+    expect(publishArgs[1]).toBe(50);
+    expect(publishArgs).toContain('feed:order');
+    expect(publishArgs).toContain('feed:last_known_good_order');
+    expect(publishArgs).toContain('feed:explanations');
+    expect(publishArgs).toContain('feed:last_known_good_explanations');
+    expect(publishArgs).toContain('feed:explanation_seals');
+    expect(publishArgs).toContain('feed:last_known_good_explanation_seals');
+    expect(publishArgs).toContain('feed:snapshot_digest');
+    expect(publishArgs).toContain('feed:last_known_good_snapshot_digest');
+    expect(publishArgs).toContain('feed:publication_integrity_seal');
+    expect(publishArgs).toContain('feed:last_known_good_publication_integrity_seal');
+    expect(publishArgs).toContain('feed:current_snapshot_generation');
+    expect(publishArgs).toContain('feed:current_snapshot_id');
+    expect(publishArgs.at(-1)).toBe('24');
+  });
+
+  it('rejects malformed publication numbers without replacing the served feed', async () => {
+    dbQueryMock
+      .mockResolvedValueOnce({ rows: [makeEpochRow()] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [buildFeedPublicationRow({
+          post_uri: 'at://did:plc:test/post/invalid-score',
+          total_score: 'not-a-number',
+        })],
+      });
+    getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
+    hasActiveContentRulesMock.mockReturnValue(false);
+
+    await expect(runScoringPipeline()).rejects.toThrow(
+      'Feed publication row has non-finite total_score for at://did:plc:test/post/invalid-score: not-a-number'
+    );
+
+    expect(redisPipelineFactoryMock).not.toHaveBeenCalled();
+    expect(redisEvalMock).not.toHaveBeenCalled();
   });
 
   it('cleans staged keys and surfaces a failed atomic publish', async () => {
@@ -383,7 +415,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -391,7 +423,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 50,
-        }],
+        })],
       });
     getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
     hasActiveContentRulesMock.mockReturnValue(false);
@@ -399,17 +431,32 @@ describe('scoring pipeline empty-feed Redis updates', () => {
 
     await expect(runScoringPipeline()).rejects.toThrow('publish failed');
 
-    expect(pipelineExpireMock).toHaveBeenCalledTimes(9);
+    expect(pipelineExpireMock).toHaveBeenCalledTimes(24);
     expect(redisDelMock).toHaveBeenCalledWith(
       expect.stringMatching(/^feed:staging:current:/),
       expect.stringMatching(/^feed:staging:last_known_good:/),
+      expect.stringMatching(/^feed:staging:order:current:/),
+      expect.stringMatching(/^feed:staging:order:last_known_good:/),
+      expect.stringMatching(/^feed:staging:explanations:current:/),
+      expect.stringMatching(/^feed:staging:explanations:last_known_good:/),
+      expect.stringMatching(/^feed:staging:explanation-seals:current:/),
+      expect.stringMatching(/^feed:staging:explanation-seals:last_known_good:/),
       expect.stringMatching(/^feed:staging:metadata:.*:0$/),
       expect.stringMatching(/^feed:staging:metadata:.*:1$/),
       expect.stringMatching(/^feed:staging:metadata:.*:2$/),
       expect.stringMatching(/^feed:staging:metadata:.*:3$/),
       expect.stringMatching(/^feed:staging:metadata:.*:4$/),
       expect.stringMatching(/^feed:staging:metadata:.*:5$/),
-      expect.stringMatching(/^feed:staging:metadata:.*:6$/)
+      expect.stringMatching(/^feed:staging:metadata:.*:6$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:7$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:8$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:9$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:10$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:11$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:12$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:13$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:14$/),
+      expect.stringMatching(/^feed:staging:metadata:.*:15$/)
     );
   });
 
@@ -418,7 +465,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -426,7 +473,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 50,
-        }],
+        })],
       });
     getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
     hasActiveContentRulesMock.mockReturnValue(false);
@@ -444,7 +491,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -452,7 +499,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 50,
-        }],
+        })],
       });
     getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
     hasActiveContentRulesMock.mockReturnValue(false);
@@ -470,7 +517,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -478,7 +525,7 @@ describe('scoring pipeline empty-feed Redis updates', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 50,
-        }],
+        })],
       });
     getCurrentContentRulesMock.mockResolvedValue({ includeKeywords: [], excludeKeywords: [] });
     hasActiveContentRulesMock.mockReturnValue(false);

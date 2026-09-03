@@ -10,6 +10,7 @@ import { registerPostExplainRoute } from './routes/post-explain.js';
 import { registerFeedStatsRoute } from './routes/feed-stats.js';
 import { registerCounterfactualRoute } from './routes/counterfactual.js';
 import { registerAuditLogRoute } from './routes/audit-log.js';
+import { registerFeedSnapshotRoute } from './routes/feed-snapshot.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -26,6 +27,9 @@ export function registerTransparencyRoutes(app: FastifyInstance): void {
 
   // Per-post explanation
   registerPostExplainRoute(app);
+
+  // Publication-bound live-feed snapshot
+  registerFeedSnapshotRoute(app);
 
   // Feed-level statistics
   registerFeedStatsRoute(app);

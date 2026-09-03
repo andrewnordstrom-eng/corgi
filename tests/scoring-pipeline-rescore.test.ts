@@ -71,6 +71,7 @@ import {
   requestFullRescore,
   __resetPipelineState,
 } from '../src/scoring/pipeline.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 import { buildEpochRow } from './helpers/index.js';
 
 let fencePendingGeneration: string | null = null;
@@ -84,6 +85,8 @@ function setupDefaultMocks() {
     del: pipelineDelMock.mockReturnThis(),
     expire: vi.fn().mockReturnThis(),
     zadd: pipelineZaddMock.mockReturnThis(),
+    rpush: vi.fn().mockReturnThis(),
+    hset: vi.fn().mockReturnThis(),
     set: pipelineSetMock.mockReturnThis(),
     exec: pipelineExecMock.mockResolvedValue([]),
   };
@@ -129,7 +132,7 @@ async function runPublishedCycle(epochId = 2) {
     .mockResolvedValueOnce({ rows: [makeEpochRow(epochId)] })
     .mockResolvedValueOnce({ rows: [] })
     .mockResolvedValueOnce({
-      rows: [{
+      rows: [buildFeedPublicationRow({
         post_uri: 'at://did:plc:author/app.bsky.feed.post/1',
         total_score: 0.8,
         author_did: 'did:plc:author',
@@ -137,7 +140,7 @@ async function runPublishedCycle(epochId = 2) {
         engagement_score: 0.4,
         embed_url: null,
         text_length: 120,
-      }],
+      })],
     })
     .mockResolvedValueOnce({ rows: [] })
     .mockResolvedValueOnce({ rows: [] });
@@ -453,7 +456,7 @@ describe('periodic full rescore for recency decay', () => {
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:author/app.bsky.feed.post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -461,7 +464,7 @@ describe('periodic full rescore for recency decay', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 120,
-        }],
+        })],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });

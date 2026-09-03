@@ -16,6 +16,7 @@ const {
   redisPipelineFactoryMock,
   pipelineDelMock,
   pipelineZaddMock,
+  pipelineHsetMock,
   pipelineSetMock,
   pipelineExecMock,
   getCurrentContentRulesMock,
@@ -29,6 +30,7 @@ const {
   redisPipelineFactoryMock: vi.fn(),
   pipelineDelMock: vi.fn(),
   pipelineZaddMock: vi.fn(),
+  pipelineHsetMock: vi.fn(),
   pipelineSetMock: vi.fn(),
   pipelineExecMock: vi.fn(),
   getCurrentContentRulesMock: vi.fn(),
@@ -64,9 +66,14 @@ vi.mock('../src/admin/status-tracker.js', () => ({
   updateScoringStatus: updateScoringStatusMock,
 }));
 
-import { runScoringPipeline, __resetPipelineState } from '../src/scoring/pipeline.js';
+import {
+  runScoringPipeline,
+  __resetPipelineState,
+} from '../src/scoring/pipeline.js';
+import type { FeedPublicationDatabaseRow } from '../src/scoring/pipeline.js';
 import { config } from '../src/config.js';
 import { buildEpochRow } from './helpers/index.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 
 function makeEpochRow(id = 2) {
   return buildEpochRow({ id });
@@ -77,6 +84,8 @@ function setupDefaultMocks() {
     del: pipelineDelMock.mockReturnThis(),
     expire: vi.fn().mockReturnThis(),
     zadd: pipelineZaddMock.mockReturnThis(),
+    rpush: vi.fn().mockReturnThis(),
+    hset: pipelineHsetMock.mockReturnThis(),
     set: pipelineSetMock.mockReturnThis(),
     exec: pipelineExecMock.mockResolvedValue([]),
   };
@@ -107,18 +116,29 @@ function setupDefaultMocks() {
  *
  * @param feedRows - rows returned by the writeToRedisFromDb query
  */
-async function runWithFeedRows(
-  feedRows: Array<{
-    post_uri: string;
-    total_score: number;
-    embed_url: string | null;
-    text_length: number;
-  }>
-) {
+interface FeedRowInput {
+  post_uri: string;
+  total_score: number;
+  embed_url: string | null;
+  text_length: number;
+}
+
+function completeFeedRow(row: FeedRowInput, index: number): FeedPublicationDatabaseRow {
+  return buildFeedPublicationRow({
+    ...row,
+    author_did: `did:plc:test-${index}`,
+    created_at: new Date(Date.UTC(2026, 8, 2, 20, 0, 0) - index * 1_000).toISOString(),
+    scored_at: '2026-09-02T20:01:00.000Z',
+    source_score_run_id: 'score-run-test',
+  });
+}
+
+async function runWithFeedRows(feedRows: FeedRowInput[]) {
+  const completeRows = feedRows.map(completeFeedRow);
   dbQueryMock
     .mockResolvedValueOnce({ rows: [makeEpochRow()] })  // getActiveEpoch
     .mockResolvedValueOnce({ rows: [] })                  // getPostsForScoring (no posts to score)
-    .mockResolvedValueOnce({ rows: feedRows })            // writeToRedisFromDb SELECT
+    .mockResolvedValueOnce({ rows: completeRows })        // writeToRedisFromDb SELECT
     .mockResolvedValueOnce({ rows: [] });                 // updateCurrentRunScope
   await runScoringPipeline();
 }

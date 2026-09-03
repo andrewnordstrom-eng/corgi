@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { dbQueryMock } = vi.hoisted(() => ({
   dbQueryMock: vi.fn(),
 }));
-const { redisGetMock } = vi.hoisted(() => ({
+const { redisGetMock, redisEvalMock } = vi.hoisted(() => ({
   redisGetMock: vi.fn(),
+  redisEvalMock: vi.fn(),
 }));
 
 vi.mock('../src/db/client.js', () => ({
@@ -17,6 +18,7 @@ vi.mock('../src/db/client.js', () => ({
 vi.mock('../src/db/redis.js', () => ({
   redis: {
     get: redisGetMock,
+    eval: redisEvalMock,
   },
 }));
 
@@ -86,6 +88,10 @@ describe('transparency routes current-run scoping', () => {
   beforeEach(() => {
     dbQueryMock.mockReset();
     redisGetMock.mockReset();
+    redisEvalMock.mockReset().mockResolvedValue(JSON.stringify({
+      snapshots: [{ snapshotStatus: 'current', found: false }],
+      pinnedAnnouncement: null,
+    }));
   });
 
   it('serves feed stats from materialized epoch metrics without request-time score scans', async () => {

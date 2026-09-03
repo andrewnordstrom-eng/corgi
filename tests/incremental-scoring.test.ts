@@ -8,10 +8,15 @@ const {
   redisPipelineFactoryMock,
   pipelineDelMock,
   pipelineZaddMock,
+  pipelineRpushMock,
+  pipelineHsetMock,
   pipelineSetMock,
   pipelineExecMock,
   pipelineExpireMock,
   redisEvalMock,
+  redisIncrMock,
+  redisSetMock,
+  redisDelMock,
   getCurrentContentRulesMock,
   hasActiveContentRulesMock,
   filterPostsMock,
@@ -25,10 +30,15 @@ const {
   redisPipelineFactoryMock: vi.fn(),
   pipelineDelMock: vi.fn(),
   pipelineZaddMock: vi.fn(),
+  pipelineRpushMock: vi.fn(),
+  pipelineHsetMock: vi.fn(),
   pipelineSetMock: vi.fn(),
   pipelineExecMock: vi.fn(),
   pipelineExpireMock: vi.fn(),
   redisEvalMock: vi.fn(),
+  redisIncrMock: vi.fn(),
+  redisSetMock: vi.fn(),
+  redisDelMock: vi.fn(),
   getCurrentContentRulesMock: vi.fn(),
   hasActiveContentRulesMock: vi.fn(),
   filterPostsMock: vi.fn(),
@@ -47,9 +57,9 @@ vi.mock('../src/db/redis.js', () => ({
   redis: {
     pipeline: redisPipelineFactoryMock,
     multi: redisPipelineFactoryMock,
-    incr: vi.fn().mockResolvedValue(1),
-    set: vi.fn().mockResolvedValue('OK'),
-    del: vi.fn().mockResolvedValue(1),
+    incr: redisIncrMock,
+    set: redisSetMock,
+    del: redisDelMock,
     eval: redisEvalMock,
   },
 }));
@@ -77,6 +87,7 @@ vi.mock('../src/lib/logger.js', () => ({
 import { runScoringPipeline, getLastScoringRunAt, __resetPipelineState } from '../src/scoring/pipeline.js';
 import { config } from '../src/config.js';
 import { buildEpochRow, buildPostRow } from './helpers/index.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 
 function makeEpochRow(id = 2) {
   return buildEpochRow({ id });
@@ -91,11 +102,16 @@ function setupDefaultMocks() {
     del: pipelineDelMock.mockReturnThis(),
     expire: pipelineExpireMock.mockReturnThis(),
     zadd: pipelineZaddMock.mockReturnThis(),
+    rpush: pipelineRpushMock.mockReturnThis(),
+    hset: pipelineHsetMock.mockReturnThis(),
     set: pipelineSetMock.mockReturnThis(),
     exec: pipelineExecMock.mockResolvedValue([]),
   };
   redisPipelineFactoryMock.mockReturnValue(pipeline);
   redisEvalMock.mockResolvedValue(1);
+  redisIncrMock.mockResolvedValue(1);
+  redisSetMock.mockResolvedValue('OK');
+  redisDelMock.mockResolvedValue(1);
   clientQueryMock.mockImplementation((sql: string) => {
     if (sql.includes('pending_rescore_generation')) {
       return Promise.resolve({ rows: [{ pending_rescore_generation: null }] });
@@ -127,7 +143,7 @@ function queryWasCalledWith(fragment: string): boolean {
 describe('incremental scoring pipeline', () => {
   beforeEach(() => {
     __resetPipelineState();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -148,15 +164,12 @@ describe('incremental scoring pipeline', () => {
     expect(postsQuery).toContain('FROM posts p');
   });
 
-  it('keeps the scoring run successful when snapshot invalidation fails after Redis write', async () => {
-    redisEvalMock
-      .mockResolvedValueOnce(1)
-      .mockRejectedValueOnce(new Error('redis eval unavailable'));
+  it('invalidates the cached feed pointer in the same atomic Redis publication', async () => {
     dbQueryMock
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/1',
           total_score: 0.5,
           author_did: 'did:plc:author',
@@ -164,7 +177,7 @@ describe('incremental scoring pipeline', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 20,
-        }],
+        })],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -172,14 +185,12 @@ describe('incremental scoring pipeline', () => {
 
     expect(pipelineExecMock).toHaveBeenCalledTimes(1);
     expect(updateScoringStatusMock).toHaveBeenCalledTimes(1);
-    expect(loggerWarnMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        epochId: 2,
-        err: expect.any(Error),
-        runId: expect.any(String),
-      }),
-      'Failed to invalidate current feed snapshot cache after feed write'
-    );
+    expect(redisEvalMock).toHaveBeenCalledTimes(1);
+    const publishArgs = redisEvalMock.mock.calls[0] as unknown[];
+    expect(publishArgs[0]).toEqual(expect.stringContaining("redis.call('INCR', KEYS[#KEYS - 1])"));
+    expect(publishArgs[0]).toEqual(expect.stringContaining("redis.call('DEL', KEYS[#KEYS])"));
+    expect(publishArgs).toContain('feed:current_snapshot_generation');
+    expect(publishArgs).toContain('feed:current_snapshot_id');
   });
 
   it('skips overlapping triggers until a timed-out scoring run actually settles', async () => {
@@ -280,7 +291,7 @@ describe('incremental scoring pipeline', () => {
       .mockResolvedValueOnce({ rows: [] })
       // writeToRedisFromDb: returns the scored post from DB
       .mockResolvedValueOnce({
-        rows: [{ post_uri: postRow.uri, total_score: 0.5 }],
+        rows: [buildFeedPublicationRow({ post_uri: postRow.uri, total_score: 0.5 })],
       })
       // updateCurrentRunScope
       .mockResolvedValueOnce({ rows: [] });
@@ -292,6 +303,11 @@ describe('incremental scoring pipeline', () => {
       (call: unknown[]) => String(call[0]).includes('post_scores ps') && String(call[0]).includes('total_score')
     );
     expect(writeCall).toBeDefined();
+    const publicationQuery = String(writeCall?.[0]);
+    expect(publicationQuery).toContain(
+      "NULLIF(BTRIM(ps.component_details->>'run_id'), '') IS NOT NULL"
+    );
+    expect(publicationQuery).toContain("ps.classification_method IN ('keyword', 'embedding')");
 
     const currentZaddCall = pipelineZaddMock.mock.calls.find(
       (call: unknown[]) => String(call[0]).startsWith('feed:staging:current:')
@@ -302,33 +318,77 @@ describe('incremental scoring pipeline', () => {
     expect(runId).not.toBe('');
     const stagedLastKnownGoodKey = `feed:staging:last_known_good:${runId}`;
     const stagedMetadataKeys = Array.from(
-      { length: 7 },
+      { length: 16 },
       (_value, index) => `feed:staging:metadata:${runId}:${index}`
     );
-    const stagedKeys = [stagedCurrentKey, stagedLastKnownGoodKey, ...stagedMetadataKeys];
+    const stagedCurrentExplanationsKey = `feed:staging:explanations:current:${runId}`;
+    const stagedLastKnownGoodExplanationsKey = `feed:staging:explanations:last_known_good:${runId}`;
+    const stagedCurrentExplanationSealsKey = `feed:staging:explanation-seals:current:${runId}`;
+    const stagedLastKnownGoodExplanationSealsKey = `feed:staging:explanation-seals:last_known_good:${runId}`;
+    const stagedCurrentOrderKey = `feed:staging:order:current:${runId}`;
+    const stagedLastKnownGoodOrderKey = `feed:staging:order:last_known_good:${runId}`;
+    const stagedKeys = [
+      stagedCurrentKey,
+      stagedLastKnownGoodKey,
+      stagedCurrentOrderKey,
+      stagedLastKnownGoodOrderKey,
+      stagedCurrentExplanationsKey,
+      stagedLastKnownGoodExplanationsKey,
+      stagedCurrentExplanationSealsKey,
+      stagedLastKnownGoodExplanationSealsKey,
+      ...stagedMetadataKeys,
+    ];
 
     // Redis should have the post from DB, not just from the in-memory scored array.
     expect(pipelineZaddMock).toHaveBeenCalledWith(stagedCurrentKey, 0.5, postRow.uri);
     expect(pipelineZaddMock).toHaveBeenCalledWith(stagedLastKnownGoodKey, 0.5, postRow.uri);
-    expect(pipelineExpireMock).toHaveBeenCalledTimes(9);
+    expect(pipelineRpushMock).toHaveBeenCalledWith(stagedCurrentOrderKey, postRow.uri);
+    expect(pipelineRpushMock).toHaveBeenCalledWith(stagedLastKnownGoodOrderKey, postRow.uri);
+    const currentExplanationCall = pipelineHsetMock.mock.calls.find(
+      (call: unknown[]) => call[0] === stagedCurrentExplanationsKey
+    );
+    expect(currentExplanationCall).toBeDefined();
+    expect(currentExplanationCall?.[1]).toBe(postRow.uri);
+    expect(JSON.parse(String(currentExplanationCall?.[2]))).toMatchObject({
+      post_uri: postRow.uri,
+      ranked_position: 1,
+    });
+    expect(pipelineExpireMock).toHaveBeenCalledTimes(24);
     const expectedStagingTtlSeconds = Math.ceil((config.SCORING_TIMEOUT_MS * 2) / 1000);
     expect(pipelineExpireMock.mock.calls).toEqual(
       stagedKeys.map((key) => [key, expectedStagingTtlSeconds])
     );
     expect(redisEvalMock).toHaveBeenCalledWith(
       expect.any(String),
-      18,
+      50,
       ...stagedKeys,
       'feed:current',
       'feed:last_known_good',
+      'feed:order',
+      'feed:last_known_good_order',
+      'feed:explanations',
+      'feed:last_known_good_explanations',
+      'feed:explanation_seals',
+      'feed:last_known_good_explanation_seals',
       'feed:epoch',
       'feed:run_id',
       'feed:updated_at',
       'feed:count',
+      'feed:explanation_schema_version',
+      'feed:snapshot_digest',
+      'feed:weights',
       'feed:last_known_good_epoch',
       'feed:last_known_good_run_id',
+      'feed:last_known_good_updated_at',
       'feed:last_known_good_count',
-      '9'
+      'feed:last_known_good_explanation_schema_version',
+      'feed:last_known_good_snapshot_digest',
+      'feed:last_known_good_weights',
+      'feed:publication_integrity_seal',
+      'feed:last_known_good_publication_integrity_seal',
+      'feed:current_snapshot_generation',
+      'feed:current_snapshot_id',
+      '24'
     );
   });
 
@@ -338,7 +398,7 @@ describe('incremental scoring pipeline', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
-          {
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/1',
             total_score: '0.9',
             author_did: 'did:plc:author-a',
@@ -346,8 +406,8 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.4',
             embed_url: null,
             text_length: '120',
-          },
-          {
+          }),
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/2',
             total_score: '0.5',
             author_did: 'did:plc:author-b',
@@ -355,7 +415,7 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.6',
             embed_url: null,
             text_length: '100',
-          },
+          }),
         ],
       })
       .mockResolvedValueOnce({ rows: [] })
@@ -393,7 +453,7 @@ describe('incremental scoring pipeline', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
-          {
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/1',
             total_score: '0.9',
             author_did: 'did:plc:author-a',
@@ -401,8 +461,8 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.4',
             embed_url: null,
             text_length: '120',
-          },
-          {
+          }),
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/2',
             total_score: '0.7',
             author_did: 'did:plc:author-a',
@@ -410,8 +470,8 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.5',
             embed_url: null,
             text_length: '110',
-          },
-          {
+          }),
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/3',
             total_score: '0.5',
             author_did: 'did:plc:author-b',
@@ -419,7 +479,7 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.6',
             embed_url: null,
             text_length: '100',
-          },
+          }),
         ],
       })
       .mockResolvedValueOnce({ rows: [] })
@@ -468,7 +528,7 @@ describe('incremental scoring pipeline', () => {
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
+        rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:test/post/metrics',
           total_score: 0.5,
           author_did: 'did:plc:author',
@@ -476,7 +536,7 @@ describe('incremental scoring pipeline', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 20,
-        }],
+        })],
       })
       .mockRejectedValueOnce(metricsError)
       .mockResolvedValueOnce({ rows: [] });
@@ -495,13 +555,13 @@ describe('incremental scoring pipeline', () => {
     );
   });
 
-  it('falls back to zero when materializing malformed current feed numeric fields', async () => {
+  it('rejects malformed current feed numeric fields before publication', async () => {
     dbQueryMock
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
-          {
+          buildFeedPublicationRow({
             post_uri: 'at://did:plc:test/post/malformed',
             total_score: 'not-a-number',
             author_did: 'did:plc:author-a',
@@ -509,32 +569,18 @@ describe('incremental scoring pipeline', () => {
             engagement_score: '0.6',
             embed_url: null,
             text_length: 'still-not-a-number',
-          },
+          }),
         ],
       })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    await runScoringPipeline();
+    await expect(runScoringPipeline()).rejects.toThrow(
+      'Feed publication row has non-finite total_score for at://did:plc:test/post/malformed: not-a-number'
+    );
 
-    const [
-      epochId,
-      authorGini,
-      avgBridging,
-      medianBridging,
-      avgEngagement,
-      medianTotal,
-      totalPostsScored,
-      uniqueAuthors,
-    ] = findEpochMetricsInsertParams();
-    expect(epochId).toBe(2);
-    expect(authorGini).toBe(0);
-    expect(avgBridging).toBe(0);
-    expect(medianBridging).toBe(0);
-    expect(avgEngagement).toBe(0.6);
-    expect(medianTotal).toBe(0);
-    expect(totalPostsScored).toBe(1);
-    expect(uniqueAuthors).toBe(1);
+    expect(redisPipelineFactoryMock).not.toHaveBeenCalled();
+    expect(redisEvalMock).not.toHaveBeenCalled();
+    expect(queryWasCalledWith('INSERT INTO epoch_metrics')).toBe(false);
   });
 
   it('incremental query passes epoch_id to filter scored posts', async () => {
@@ -557,7 +603,11 @@ describe('incremental scoring pipeline', () => {
     await runScoringPipeline();
 
     // The incremental query should include epochId as parameter
-    const postsQueryParams = dbQueryMock.mock.calls[1][1] as unknown[];
+    const incrementalCall = dbQueryMock.mock.calls.find(
+      (call: unknown[]) => String(call[0]).includes('UNION ALL')
+    );
+    expect(incrementalCall).toBeDefined();
+    const postsQueryParams = incrementalCall?.[1] as unknown[];
     // $1 = cutoff, $2 = epochId, $3 = limit
     expect(postsQueryParams[1]).toBe(5); // epoch_id
   });
