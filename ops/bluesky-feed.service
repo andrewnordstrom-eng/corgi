@@ -21,6 +21,8 @@ StartLimitBurst=5
 [Service]
 Type=notify
 NotifyAccess=main
+User=bluesky-feed
+Group=bluesky-feed
 
 # Working directory and environment
 WorkingDirectory=/opt/bluesky-feed

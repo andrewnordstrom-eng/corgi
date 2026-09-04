@@ -401,9 +401,9 @@ jobs:
               echo "Deployment user must not have unrestricted passwordless sudo" >&2
               exit 1
             fi
-            SERVICE_USER="$(sudo -n systemctl show bluesky-feed --property=User --value)"
-            SERVICE_GROUP="$(sudo -n systemctl show bluesky-feed --property=Group --value)"
-            SERVICE_MAIN_PID="$(sudo -n systemctl show bluesky-feed --property=MainPID --value)"
+            SERVICE_USER="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-user)"
+            SERVICE_GROUP="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-group)"
+            SERVICE_MAIN_PID="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-main-pid)"
             if [ -z "$SERVICE_USER" ] || [ "$SERVICE_USER" = "root" ] || \
                [ "$SERVICE_USER" = "$DEPLOY_USER" ] || [ -z "$SERVICE_GROUP" ] || \
                [ "$SERVICE_GROUP" = "root" ]; then
@@ -617,9 +617,9 @@ jobs:
               echo "Deployment user must not have unrestricted passwordless sudo" >&2
               exit 1
             fi
-            SERVICE_USER="$(sudo -n systemctl show bluesky-feed --property=User --value)"
-            SERVICE_GROUP="$(sudo -n systemctl show bluesky-feed --property=Group --value)"
-            SERVICE_MAIN_PID="$(sudo -n systemctl show bluesky-feed --property=MainPID --value)"
+            SERVICE_USER="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-user)"
+            SERVICE_GROUP="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-group)"
+            SERVICE_MAIN_PID="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-main-pid)"
             if [ -z "$SERVICE_USER" ] || [ "$SERVICE_USER" = "root" ] || \
                [ "$SERVICE_USER" = "$DEPLOY_USER" ] || [ -z "$SERVICE_GROUP" ] || \
                [ "$SERVICE_GROUP" = "root" ]; then
@@ -968,16 +968,8 @@ jobs:
 
             read_ingestion_signals() {
               local signals
-              signals="$(timeout 10s sudo docker exec bluesky-feed-postgres \
-                psql -U feed -d bluesky_feed -v ON_ERROR_STOP=1 -tA -c "
-                  SELECT cursor.cursor_us::text || '|' || newest.indexed_epoch::text
-                  FROM (SELECT cursor_us FROM jetstream_cursor WHERE id = 1) cursor
-                  CROSS JOIN (
-                    SELECT FLOOR(EXTRACT(EPOCH FROM MAX(indexed_at)))::bigint AS indexed_epoch
-                    FROM posts
-                    WHERE deleted = FALSE
-                  ) newest
-                  WHERE newest.indexed_epoch IS NOT NULL;" | tr -d '[:space:]')" || return 1
+              signals="$(timeout 20s sudo -n -- /usr/local/sbin/corgi-deploy-root \
+                postgres-ingestion-signals | tr -d '[:space:]')" || return 1
               if [ -z "$signals" ]; then
                 echo "Ingestion signal query returned no row: cursor or newest post is missing" >&2
                 return 1
@@ -1115,6 +1107,28 @@ jobs:
               done
             }
 
+            ensure_runtime_artifacts_service_readable() {
+              local artifact_path
+              local parent_path
+              for parent_path in . web web-next cli packages packages/feed-sdk; do
+                if [ -e "$parent_path" ] || [ -L "$parent_path" ]; then
+                  if [ ! -d "$parent_path" ] || [ -L "$parent_path" ]; then
+                    echo "Runtime artifact parent is missing or unsafe: path=$parent_path" >&2
+                    return 1
+                  fi
+                  chmod o+x "$parent_path" || return 1
+                fi
+              done
+              for artifact_path in "${RUNTIME_ARTIFACT_PATHS[@]}"; do
+                if [ ! -d "$artifact_path" ] || [ -L "$artifact_path" ]; then
+                  echo "Runtime artifact is missing or unsafe: path=$artifact_path" >&2
+                  return 1
+                fi
+                find "$artifact_path" -type d -exec chmod o+rx {} + || return 1
+                find "$artifact_path" -type f -exec chmod o+r {} + || return 1
+              done
+            }
+
             restore_previous_artifacts() {
               local artifact_failed
               local artifact_path
@@ -1202,7 +1216,7 @@ jobs:
                 fi
                 rollback_health_response="$(curl -fsS --connect-timeout 2 --max-time 5 http://localhost:3001/health)"
                 if ! assert_health_revision "$rollback_health_response" "$PREV_COMMIT" || \
-                   ! sudo systemctl is-active --quiet bluesky-feed; then
+                   ! sudo -n -- /usr/local/sbin/corgi-deploy-root service-is-active; then
                   echo "Candidate failed before artifact swap, but the existing runtime could not be verified" >&2
                   write_receipt rollback_failed || true
                   return 1
@@ -1220,7 +1234,9 @@ jobs:
                  [ "$(git rev-parse HEAD 2>/dev/null)" != "$PREV_COMMIT" ]; then
                 artifact_restore_failed=true
               fi
-              if ! restore_previous_artifacts; then
+              if ! restore_previous_artifacts || \
+                 ! ensure_runtime_artifacts_service_readable || \
+                 ! sudo -n -- /usr/local/sbin/corgi-deploy-root service-can-read-entrypoint; then
                 artifact_restore_failed=true
               fi
               if [ "$artifact_restore_failed" = "true" ]; then
@@ -1238,14 +1254,14 @@ jobs:
               fi
               # The retained release replaced every served artifact; restart it without
               # registry access or a rebuild.
-              if ! sudo systemctl restart bluesky-feed; then
+              if ! sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart; then
                 write_receipt rollback_failed || true
                 return 1
               fi
               for rollback_attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
                 if rollback_health_response="$(curl -fsS --connect-timeout 2 --max-time 5 http://localhost:3001/health)" && \
                    assert_health_revision "$rollback_health_response" "$PREV_COMMIT" && \
-                   sudo systemctl is-active --quiet bluesky-feed; then
+                   sudo -n -- /usr/local/sbin/corgi-deploy-root service-is-active; then
                   if rollback_health_signals="$(read_ingestion_signals)" && \
                      ingestion_signals_are_fresh "$rollback_health_signals" "$rollback_minimum_cursor"; then
                     echo "Rollback ingestion diagnostics are fresh and advancing" >&2
@@ -1338,9 +1354,11 @@ jobs:
             test "$ACTUAL_SHA" = "$DEPLOY_SHA"
             backup_previous_artifacts
             install_candidate_artifacts
+            ensure_runtime_artifacts_service_readable
+            sudo -n -- /usr/local/sbin/corgi-deploy-root service-can-read-entrypoint
             test "$(cat dist/.release-sha 2>/dev/null)" = "$DEPLOY_SHA"
             for i in 1 2 3 4 5; do
-              if sudo docker exec bluesky-feed-demo-redis redis-cli ping | grep -q PONG; then
+              if sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping | grep -q PONG; then
                 echo "Isolated demo Redis is ready (attempt $i/5)"
                 break
               fi
@@ -1352,12 +1370,12 @@ jobs:
             done
             PRE_RESTART_SHA="$(git rev-parse HEAD)"
             test "$PRE_RESTART_SHA" = "$DEPLOY_SHA"
-            PREVIOUS_MAIN_PID="$(sudo systemctl show bluesky-feed --property MainPID --value)"
+            PREVIOUS_MAIN_PID="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-main-pid)"
             if [[ ! "$PREVIOUS_MAIN_PID" =~ ^[1-9][0-9]*$ ]]; then
               echo "Service has no valid running pre-restart process: MainPID=$PREVIOUS_MAIN_PID" >&2
               false
             fi
-            sudo systemctl restart bluesky-feed
+            sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart
 
             # Post-deploy composite health verification (12 retries, 10s apart).
             # Promotion requires the process-reported revision plus both the
@@ -1434,27 +1452,27 @@ jobs:
                 DEMO_MAXMEMORY="probe-failed"
                 DEMO_APPENDONLY="probe-failed"
                 DEMO_SAVE="probe-failed"
-                if ! DEMO_KEY_EXISTS=$(sudo docker exec bluesky-feed-demo-redis redis-cli --raw EXISTS "$DEMO_KEY"); then
+                if ! DEMO_KEY_EXISTS=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-exists "$DEMO_KEY"); then
                   echo "Demo Redis session-key probe failed"
                   HEALTHY=false
                 fi
-                if ! PRODUCTION_KEY_EXISTS=$(sudo docker exec bluesky-feed-redis redis-cli --raw EXISTS "$DEMO_KEY"); then
+                if ! PRODUCTION_KEY_EXISTS=$(sudo -n -- /usr/local/sbin/corgi-deploy-root production-redis-exists "$DEMO_KEY"); then
                   echo "Production Redis isolation probe failed"
                   HEALTHY=false
                 fi
-                if ! DEMO_POLICY=$(sudo docker exec bluesky-feed-demo-redis redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1); then
+                if ! DEMO_POLICY=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-maxmemory-policy | tail -n 1); then
                   echo "Demo Redis maxmemory-policy probe failed"
                   HEALTHY=false
                 fi
-                if ! DEMO_MAXMEMORY=$(sudo docker exec bluesky-feed-demo-redis redis-cli --raw CONFIG GET maxmemory | tail -n 1); then
+                if ! DEMO_MAXMEMORY=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-maxmemory | tail -n 1); then
                   echo "Demo Redis maxmemory probe failed"
                   HEALTHY=false
                 fi
-                if ! DEMO_APPENDONLY=$(sudo docker exec bluesky-feed-demo-redis redis-cli --raw CONFIG GET appendonly | tail -n 1); then
+                if ! DEMO_APPENDONLY=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-appendonly | tail -n 1); then
                   echo "Demo Redis appendonly probe failed"
                   HEALTHY=false
                 fi
-                if ! DEMO_SAVE=$(sudo docker exec bluesky-feed-demo-redis redis-cli --raw CONFIG GET save | tail -n 1); then
+                if ! DEMO_SAVE=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-save | tail -n 1); then
                   echo "Demo Redis save-policy probe failed"
                   HEALTHY=false
                 fi
@@ -1478,11 +1496,11 @@ jobs:
               elif [ "$DEPLOYED_SHA" != "$DEPLOY_SHA" ]; then
                 echo "Deployed checkout SHA does not match requested SHA" >&2
                 HEALTHY=false
-              elif ! sudo systemctl is-active --quiet bluesky-feed; then
+              elif ! sudo -n -- /usr/local/sbin/corgi-deploy-root service-is-active; then
                 echo "Running service is not active" >&2
                 HEALTHY=false
               else
-                MAIN_PID="$(sudo systemctl show bluesky-feed --property MainPID --value)"
+                MAIN_PID="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-main-pid)"
                 if [[ ! "$MAIN_PID" =~ ^[1-9][0-9]*$ ]]; then
                   echo "Running service has invalid MainPID: $MAIN_PID" >&2
                   HEALTHY=false
@@ -1760,7 +1778,7 @@ jobs:
             CHECKOUT_SHA="$(git rev-parse HEAD)"
             HEALTH_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 5 http://localhost:3001/health)" || HEALTH_RESPONSE=""
             RUNTIME_SHA="$(printf '%s' "$HEALTH_RESPONSE" | node -e "let body=''; process.stdin.on('data', chunk => body += chunk); process.stdin.on('end', () => { let revision; try { revision = JSON.parse(body).revision; } catch { revision = undefined; } process.stdout.write(typeof revision === 'string' && /^[0-9a-f]{40}$/.test(revision) ? revision : 'unknown'); });")"
-            SERVICE_STATE="$(sudo systemctl is-active bluesky-feed || true)"
+            SERVICE_STATE="$(sudo -n -- /usr/local/sbin/corgi-deploy-root service-state || true)"
             printf 'CORGI_DEPLOY_STATE|checkout=%s|runtime=%s|service=%s\n' "$CHECKOUT_SHA" "$RUNTIME_SHA" "$SERVICE_STATE"
             if [ "$RUNTIME_SHA" = "unknown" ]; then
               echo "Health endpoint did not report a valid revision; runtime identity is unverified" >&2

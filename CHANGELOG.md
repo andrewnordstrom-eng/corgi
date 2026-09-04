@@ -21,6 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - Relicensed the project from MIT to Apache-2.0. Releases through v1.2.0 remain available under MIT.
+- Production deploys now separate the unprivileged service identity from the deployment user and route privileged health/restart operations through a fixed root-owned command allowlist.
 - Production governance now closes voting into an explicit results-review phase, applies approved signal weights, topic weights, and content rules together, and durably requests a full same-epoch rescore for the updated policy.
 - Public `web-next` homepage refreshed around the reviewer-safe live snapshot, anonymized receipt copy, and demo-first CTA path.
 - README command examples and tooling descriptions updated to match current CLI and MCP behavior

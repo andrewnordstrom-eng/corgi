@@ -271,7 +271,7 @@ describe('shadow demo isolation guards', () => {
     expect(deploy).toContain('DEMO_CLIENT_NONCE="deploy-probe-${PROBE_UUID}"');
     expect(deploy).toContain('\\"clientNonce\\":\\"${DEMO_CLIENT_NONCE}\\"');
     expect(SHADOW_DEMO_SHARED_CORPUS_TTL_SECONDS).toBe(60 * 60);
-    expect(usesOnlyFixedSudoDockerExecCommands(deploy)).toBe(true);
+    expect(usesOnlyFixedPrivilegeDispatcherCommands(deploy)).toBe(true);
 
     const demoCompose = compose.split('demo-redis:')[1];
     const maxmemoryMatch = demoCompose?.match(/--maxmemory\s+(\d+)mb/);
@@ -309,27 +309,33 @@ describe('shadow demo isolation guards', () => {
   });
 });
 
-describe('fixed sudo Docker exec command matcher', () => {
+describe('fixed privileged dispatcher command matcher', () => {
   it.each([
-    'sudo docker exec bluesky-feed-demo-redis redis-cli ping',
-    'if sudo docker exec bluesky-feed-demo-redis redis-cli ping; then true; fi',
-    'VALUE=$(sudo docker exec bluesky-feed-demo-redis redis-cli ping)',
-    'sudo docker \\\n      exec bluesky-feed-demo-redis redis-cli ping',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping',
+    'if sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping; then true; fi',
+    'VALUE=$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping)',
+    'VALUE="$(sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping)"',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root \\\n      demo-redis-ping',
   ])('accepts privileged invocation: %j', (script) => {
-    expect(usesOnlyFixedSudoDockerExecCommands(script)).toBe(true);
+    expect(usesOnlyFixedPrivilegeDispatcherCommands(script)).toBe(true);
   });
 
   it.each([
     '',
-    'docker exec bluesky-feed-demo-redis redis-cli ping',
+    '/usr/local/sbin/corgi-deploy-root demo-redis-ping',
     'sudo docker compose up -d',
     'sudo docker exec bluesky-feed-demo-redis redis-cli ping\ndocker ps',
-    '# sudo docker exec bluesky-feed-demo-redis redis-cli ping',
-    'echo "sudo docker exec bluesky-feed-demo-redis redis-cli ping"',
-    'echo sudo docker exec bluesky-feed-demo-redis redis-cli ping',
+    '# sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping',
+    'echo "sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping"',
+    'echo sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping',
+    'VALUE="$(sudo docker exec bluesky-feed-demo-redis redis-cli ping)"',
+    'VALUE="$(printf %s "$(sudo docker exec bluesky-feed-demo-redis redis-cli ping)")"',
+    'VALUE="$(printf %s "$(/usr/local/sbin/corgi-deploy-root demo-redis-ping)")"',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping\nsudo -n -- /usr/bin/docker ps',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping\nsudo -n -- /usr/bin/systemctl status bluesky-feed',
     'docker \\\n      compose up -d',
   ])('rejects missing or non-privileged invocation: %j', (script) => {
-    expect(usesOnlyFixedSudoDockerExecCommands(script)).toBe(false);
+    expect(usesOnlyFixedPrivilegeDispatcherCommands(script)).toBe(false);
   });
 });
 
@@ -647,9 +653,10 @@ git() {
   fi
 }
 curl() { printf '%s' '{"status":"ok","revision":"stub"}'; }
+ensure_runtime_artifacts_service_readable() { return 0; }
 sudo() {
   printf 'sudo:%s\\n' "$*" >> "$TEST_LOG"
-  if [ "$1" = "systemctl" ] && [ "$2" = "restart" ] && [ "$TEST_FAILURE" = "restart" ]; then
+  if [ "$1" = "-n" ] && [ "$4" = "service-restart" ] && [ "$TEST_FAILURE" = "restart" ]; then
     return 1
   fi
 }
@@ -677,25 +684,31 @@ rollback_application test_failure
           );
           expect(events).toContain('cleanup');
           expect(events).not.toContain('restore');
-          expect(events).not.toContain('sudo:systemctl restart bluesky-feed');
+          expect(events).not.toContain(
+            'sudo:-n -- /usr/local/sbin/corgi-deploy-root service-restart'
+          );
         } else if (expectedReceipt === 'rolled_back') {
           expect(events).toContain('receipt:rollback_interrupted');
           expect(events).toContain('restore');
-          expect(events).toContain('sudo:systemctl restart bluesky-feed');
+          expect(events).toContain(
+            'sudo:-n -- /usr/local/sbin/corgi-deploy-root service-restart'
+          );
           expect(events).toContain(
             `receipt:rolled_back:${requestedSha}:${previousSha}:${previousSha}`
           );
           expect(events.indexOf('restore')).toBeLessThan(
-            events.indexOf('sudo:systemctl restart bluesky-feed')
+            events.indexOf('sudo:-n -- /usr/local/sbin/corgi-deploy-root service-restart')
           );
-          expect(events.indexOf('sudo:systemctl restart bluesky-feed')).toBeLessThan(
-            events.indexOf('cleanup')
-          );
+          expect(
+            events.indexOf('sudo:-n -- /usr/local/sbin/corgi-deploy-root service-restart')
+          ).toBeLessThan(events.indexOf('cleanup'));
         } else {
           expect(events).toContain('receipt:rollback_interrupted');
           expect(events).not.toContain('receipt:rolled_back');
           if (failure === 'restore') {
-            expect(events).not.toContain('sudo:systemctl restart bluesky-feed');
+            expect(events).not.toContain(
+              'sudo:-n -- /usr/local/sbin/corgi-deploy-root service-restart'
+            );
           }
           if (failure === 'health') {
             expect(events.match(/revision:/g)).toHaveLength(12);
@@ -983,6 +996,43 @@ on_deploy_error 1
     expect(extractionIndex).toBeGreaterThan(diskGateIndex);
   });
 
+  it('makes runtime artifacts service-readable after restrictive extraction', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'corgi-artifact-modes-'));
+    const remoteScript = extractRemoteDeployScript(readFileSync(DEPLOY_FILE, 'utf8'));
+    const accessFunction = extractShellFunction(
+      remoteScript,
+      'ensure_runtime_artifacts_service_readable'
+    );
+    try {
+      const result = spawnSync(
+        'bash',
+        [
+          '-c',
+          `set -Eeuo pipefail
+umask 077
+mkdir -p node_modules/example dist
+printf '%s\n' module > node_modules/example/index.js
+printf '%s\n' service > dist/index.js
+RUNTIME_ARTIFACT_PATHS=(node_modules dist)
+${accessFunction}
+ensure_runtime_artifacts_service_readable`,
+        ],
+        { cwd: directory, encoding: 'utf8' }
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(statSync(directory).mode & 0o001).toBe(0o001);
+      expect(statSync(join(directory, 'node_modules', 'example')).mode & 0o005).toBe(0o005);
+      expect(statSync(join(directory, 'dist')).mode & 0o005).toBe(0o005);
+      expect(statSync(join(directory, 'node_modules', 'example', 'index.js')).mode & 0o004).toBe(
+        0o004
+      );
+      expect(statSync(join(directory, 'dist', 'index.js')).mode & 0o004).toBe(0o004);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(['partial_backup', 'partial_install', 'restore_failure'] as const)(
     'restores PREV_COMMIT artifacts after $mode interruption',
     (mode) => {
@@ -1167,7 +1217,10 @@ restore_previous_artifacts
 
   it('rejects a deploy script without a service restart', () => {
     const deploy = readFileSync(DEPLOY_FILE, 'utf8');
-    const withoutRestart = deploy.replaceAll('sudo systemctl restart bluesky-feed', '');
+    const withoutRestart = deploy.replaceAll(
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart',
+      ''
+    );
 
     expect(() => assertDeployMigrationOrdering(withoutRestart)).toThrow(
       'Missing service restart'
@@ -1186,7 +1239,7 @@ restore_previous_artifacts
   it('rejects a deploy script that verifies health before restarting', () => {
     const deploy = readFileSync(DEPLOY_FILE, 'utf8');
     const healthMarker = '# Post-deploy composite health verification';
-    const restartMarker = 'sudo systemctl restart bluesky-feed';
+    const restartMarker = 'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart';
     const withoutHealthCheck = replaceInSuccessfulDeploy(deploy, healthMarker, '');
     const reordered = replaceInSuccessfulDeploy(
       withoutHealthCheck,
@@ -1281,8 +1334,15 @@ describe('production exact-SHA promotion guards', () => {
     expect(admissionIndex).toBeGreaterThanOrEqual(0);
     expect(transferIndex).toBeGreaterThan(admissionIndex);
     expect(admissionScript).toContain('sudo -n /usr/bin/true');
-    expect(admissionScript).toContain('systemctl show bluesky-feed --property=User --value');
-    expect(admissionScript).toContain('systemctl show bluesky-feed --property=Group --value');
+    expect(admissionScript).toContain(
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root service-user'
+    );
+    expect(admissionScript).toContain(
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root service-group'
+    );
+    expect(admissionScript).toContain(
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root service-main-pid'
+    );
     expect(admissionScript).toContain('stat -c \'%u\' "/proc/${SERVICE_MAIN_PID}"');
     expect(admissionScript).toContain(
       'awk \'/^Gid:/ { print $3 }\' "/proc/${SERVICE_MAIN_PID}/status"'
@@ -1360,13 +1420,13 @@ describe('production exact-SHA promotion guards', () => {
     expect(remoteScript).not.toContain('sudo docker compose');
     expect(remoteScript).not.toMatch(/sudo docker (?:run|create|start)/);
     expect(remoteScript).toContain(
-      'sudo docker exec bluesky-feed-postgres \\\n                psql -U feed -d bluesky_feed'
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root \\\n                postgres-ingestion-signals'
     );
     expect(remoteScript).toContain(
-      'sudo docker exec bluesky-feed-demo-redis redis-cli ping'
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root demo-redis-ping'
     );
     expect(remoteScript).toContain(
-      'sudo docker exec bluesky-feed-redis redis-cli --raw EXISTS "$DEMO_KEY"'
+      'sudo -n -- /usr/local/sbin/corgi-deploy-root production-redis-exists "$DEMO_KEY"'
     );
   });
 
@@ -1610,7 +1670,10 @@ describe('production exact-SHA promotion guards', () => {
 
   it.each([
     { name: 'artifact swap', marker: 'install_candidate_artifacts' },
-    { name: 'restart', marker: 'sudo systemctl restart bluesky-feed' },
+    {
+      name: 'restart',
+      marker: 'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart',
+    },
     { name: 'health', marker: 'if [ "$HEALTHY" = "false" ]; then' },
   ])('rejects a deploy path without rollback coverage for $name failure', ({ marker }) => {
     const deploy = readFileSync(DEPLOY_FILE, 'utf8');
@@ -1736,7 +1799,7 @@ describe('production exact-SHA promotion guards', () => {
   it('rejects a cursor baseline captured by the previous process', () => {
     const deploy = readFileSync(DEPLOY_FILE, 'utf8');
     const baseline = 'POST_RESTART_BASELINE_SIGNALS="$(read_ingestion_signals)"';
-    const restart = 'sudo systemctl restart bluesky-feed';
+    const restart = 'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart';
     const withoutBaseline = replaceInSuccessfulDeploy(deploy, baseline, '');
     const mutated = replaceInSuccessfulDeploy(
       withoutBaseline,
@@ -3035,7 +3098,9 @@ function assertExactShaPromotionContract(workflow: string): void {
   const releaseArtifactIndex = successLines.indexOf(
     'test "$(cat dist/.release-sha 2>/dev/null)" = "$DEPLOY_SHA"'
   );
-  const restartIndex = successLines.indexOf('sudo systemctl restart bluesky-feed');
+  const restartIndex = successLines.indexOf(
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart'
+  );
   const runtimeCompareIndex = successLines.findIndex((line) =>
     line.includes('[ "$RUNTIME_SHA" != "$DEPLOY_SHA" ]')
   );
@@ -3072,7 +3137,7 @@ function assertRollbackCoverage(remoteScript: string): void {
     'restore_previous_artifacts',
     'Candidate failed before production artifact mutation; previous runtime remains active',
     'Rollback could not restore the retained PREV_COMMIT artifacts',
-    'sudo systemctl restart bluesky-feed',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart',
   ]) {
     if (!rollbackFunction.includes(marker)) {
       throw new Error(`Rollback function missing marker: ${marker}`);
@@ -3113,7 +3178,7 @@ function assertRollbackCoverage(remoteScript: string): void {
   );
   const rollbackRestoreIndex = rollbackFunction.indexOf('restore_previous_artifacts');
   const rollbackRestartIndex = rollbackFunction.indexOf(
-    'sudo systemctl restart bluesky-feed'
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart'
   );
   if (
     rollbackCheckoutIndex < 0 ||
@@ -3159,7 +3224,7 @@ function assertRollbackCoverage(remoteScript: string): void {
   for (const marker of [
     'backup_previous_artifacts',
     'install_candidate_artifacts',
-    'sudo systemctl restart bluesky-feed',
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart',
     'if [ "$HEALTHY" = "false" ]; then',
   ]) {
     if (!successPath.includes(marker)) {
@@ -3186,7 +3251,9 @@ function assertRollbackCoverage(remoteScript: string): void {
       throw new Error(`Composite health progression proof missing marker: ${marker}`);
     }
   }
-  const restartIndex = successPath.indexOf('sudo systemctl restart bluesky-feed');
+  const restartIndex = successPath.indexOf(
+    'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart'
+  );
   const postRestartBaselineIndex = successPath.indexOf(
     'POST_RESTART_BASELINE_SIGNALS="$(read_ingestion_signals)"'
   );
@@ -3697,6 +3764,10 @@ function gitSubcommand(line: string): GitMutationSubcommand | null {
   if (/^sudo(?:\s+|$)/.test(remainder)) {
     remainder = remainder.replace(/^sudo\s*/, '');
     while (remainder.startsWith('-')) {
+      if (/^--(?:\s+|$)/.test(remainder)) {
+        remainder = remainder.replace(/^--\s*/, '');
+        break;
+      }
       const sudoOptionWithValue = remainder.match(
         /^(?:(?:-[uUgChp]|--(?:user|group|host|chdir|prompt))\s+(?:"[^"]*"|'[^']*'|\S+))\s*/
       );
@@ -3955,7 +4026,7 @@ function assertRollbackContract(document: string): void {
 
 function assertDeployMigrationOrdering(script: string): void {
   assertMigrationBlockContract(extractRemoteDeployScript(script));
-  const restartMarker = 'sudo systemctl restart bluesky-feed';
+  const restartMarker = 'sudo -n -- /usr/local/sbin/corgi-deploy-root service-restart';
   const postDeployHealthMarker = '# Post-deploy composite health verification';
   const deployStepStart = script.indexOf('      - name: Deploy to VPS\n');
   const successStart = script.indexOf(
@@ -3999,39 +4070,50 @@ function assertDeployMigrationOrdering(script: string): void {
   }
 }
 
-function usesOnlyFixedSudoDockerExecCommands(script: string): boolean {
+function usesOnlyFixedPrivilegeDispatcherCommands(script: string): boolean {
   const tokens = tokenizeShellCommands(script);
-  const invocationIndexes = tokens.flatMap((token, index) =>
-    token === 'docker' ? [index] : []
+  const dispatcherIndexes = tokens.flatMap((token, index) =>
+    token === '/usr/local/sbin/corgi-deploy-root' ? [index] : []
+  );
+  const directPrivilegeIndexes = tokens.flatMap((token, index) =>
+    token.split('/').at(-1) === 'docker' || token.split('/').at(-1) === 'systemctl'
+      ? [index]
+      : []
   );
 
   return (
-    invocationIndexes.length > 0 &&
-    invocationIndexes.every(
-      (index) => tokens[index + 1] === 'exec' && isDirectSudoCommand(tokens, index)
-    )
+    dispatcherIndexes.length > 0 &&
+    directPrivilegeIndexes.length === 0 &&
+    dispatcherIndexes.every((index) => isDirectSudoCommand(tokens, index))
   );
 }
 
-function isDirectSudoCommand(tokens: string[], dockerIndex: number): boolean {
+function isDirectSudoCommand(tokens: string[], dispatcherIndex: number): boolean {
   const boundaries = new Set(['\n', ';', '&', '|', '(', ')']);
-  let commandStart = dockerIndex;
+  let commandStart = dispatcherIndex;
   while (commandStart > 0 && !boundaries.has(tokens[commandStart - 1])) {
     commandStart -= 1;
   }
 
   const controlWords = new Set(['if', 'then', 'elif', 'while', 'until', '!']);
   const commandPrefix = tokens
-    .slice(commandStart, dockerIndex)
+    .slice(commandStart, dispatcherIndex)
     .filter((token) => !controlWords.has(token));
-  if (commandPrefix.length === 1 && commandPrefix[0] === 'sudo') {
+  if (
+    commandPrefix.length === 3 &&
+    commandPrefix[0] === 'sudo' &&
+    commandPrefix[1] === '-n' &&
+    commandPrefix[2] === '--'
+  ) {
     return true;
   }
   return (
-    commandPrefix.length === 3 &&
+    commandPrefix.length === 5 &&
     commandPrefix[0] === 'timeout' &&
     /^\d+[smh]$/.test(commandPrefix[1] ?? '') &&
-    commandPrefix[2] === 'sudo'
+    commandPrefix[2] === 'sudo' &&
+    commandPrefix[3] === '-n' &&
+    commandPrefix[4] === '--'
   );
 }
 
@@ -4039,6 +4121,7 @@ function tokenizeShellCommands(script: string): string[] {
   const tokens: string[] = [];
   let word = '';
   let quote: "'" | '"' | null = null;
+  let doubleQuotedCommandDepth = 0;
   let index = 0;
 
   const pushWord = (): void => {
@@ -4053,6 +4136,14 @@ function tokenizeShellCommands(script: string): string[] {
     const next = script[index + 1];
 
     if (quote !== null) {
+      if (quote === '"' && char === '$' && next === '(') {
+        pushWord();
+        tokens.push('(');
+        doubleQuotedCommandDepth += 1;
+        quote = null;
+        index += 2;
+        continue;
+      }
       if (char === quote) {
         quote = null;
       } else if (char === '\\' && quote === '"' && next !== undefined) {
@@ -4099,6 +4190,16 @@ function tokenizeShellCommands(script: string): string[] {
     if (';&|()'.includes(char)) {
       pushWord();
       tokens.push(char);
+      if (doubleQuotedCommandDepth > 0) {
+        if (char === '(') {
+          doubleQuotedCommandDepth += 1;
+        } else if (char === ')') {
+          doubleQuotedCommandDepth -= 1;
+          if (doubleQuotedCommandDepth === 0) {
+            quote = '"';
+          }
+        }
+      }
       index += 1;
       continue;
     }
