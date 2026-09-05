@@ -642,7 +642,7 @@ function parseAllowedOrigins(): Set<string> {
   return new Set(defaults);
 }
 
-export function parseTrustProxyConfig(value: string): boolean | number | string | string[] {
+export function parseTrustProxyConfig(value: string): boolean | string | string[] {
   const normalized = value.trim();
   if (!normalized) {
     return false;
@@ -658,7 +658,10 @@ export function parseTrustProxyConfig(value: string): boolean | number | string 
   }
 
   if (/^\d+$/.test(normalized)) {
-    return Number.parseInt(normalized, 10);
+    throw new TypeError(
+      'TRUST_PROXY numeric hop counts are unsupported because they cannot validate the connecting proxy. ' +
+      'Use an explicit trusted proxy IP/CIDR or "loopback" instead.',
+    );
   }
 
   if (normalized.includes(',')) {

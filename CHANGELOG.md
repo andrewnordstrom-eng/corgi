@@ -20,6 +20,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Dedicated support guide (`SUPPORT.md`) and issue-template contact links for support/security routing
 
 ### Changed
+- Updated vulnerable dependencies across shipped workspaces without adding audit exceptions. Numeric `TRUST_PROXY` hop counts now fail startup with migration guidance; use an explicit trusted proxy IP/CIDR or `loopback` before deploying this update.
 - Relicensed the project from MIT to Apache-2.0. Releases through v1.2.0 remain available under MIT.
 - Production governance now closes voting into an explicit results-review phase, applies approved signal weights, topic weights, and content rules together, and durably requests a full same-epoch rescore for the updated policy.
 - Public `web-next` homepage refreshed around the reviewer-safe live snapshot, anonymized receipt copy, and demo-first CTA path.
