@@ -5,6 +5,8 @@
 import pg from 'pg';
 
 const { Pool } = pg;
+const DIRECT_DATABASE_STATEMENT_TIMEOUT_MILLIS = 5_000;
+const DIRECT_DATABASE_QUERY_TIMEOUT_MILLIS = 7_000;
 
 interface EpochRow {
   id: number;
@@ -43,6 +45,8 @@ export async function getDirectEpochStatus(databaseUrl: string): Promise<EpochSt
     connectionString: databaseUrl,
     max: 1,
     connectionTimeoutMillis: 5000,
+    statement_timeout: DIRECT_DATABASE_STATEMENT_TIMEOUT_MILLIS,
+    query_timeout: DIRECT_DATABASE_QUERY_TIMEOUT_MILLIS,
   });
 
   try {

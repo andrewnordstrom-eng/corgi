@@ -1,0 +1,7 @@
+#!/bin/sh
+
+set -eu
+
+exec /usr/bin/timeout --signal=KILL 15s \
+  /usr/bin/docker exec bluesky-feed-redis \
+  /bin/busybox timeout -s KILL 10 /usr/local/bin/redis-cli --raw GET feed:updated_at
