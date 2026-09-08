@@ -187,6 +187,27 @@ describe('PROJ-2258 operations principal policy', () => {
     expect(result.stderr).toContain(message);
   });
 
+  it.each([
+    'postgresql://corgi_operations:test@unapproved.invalid:5433/bluesky_feed',
+    'postgresql://corgi_operations:test@127.0.0.1:5432/bluesky_feed',
+    'postgresql://corgi_operations:test@127.0.0.1:5433/other',
+    'postgresql://feed:test@127.0.0.1:5433/bluesky_feed',
+    'postgresql://corgi_operations:test@localhost:5433/bluesky_feed',
+    'postgresql://corgi_operations:test@127.0.0.1:5433/bluesky_feed?host=unapproved.invalid',
+    'postgresql://corgi_operations:test@127.0.0.1:5433/bluesky_feed?sslkey=/etc/passwd',
+    'postgresql://corgi_operations:test@127.0.0.1:5433/bluesky_feed?sslmode=disable',
+    'postgresql://corgi_operations:test@127.0.0.1:5433/bluesky_feed#fragment',
+    'postgresql://corgi_operations:%zz@127.0.0.1:5433/bluesky_feed',
+  ])('rejects an epoch connection outside the fixed database contract: %s', (url) => {
+    const result = runDispatcher('epoch-status', `${url}\n`);
+
+    assertSpawnCompleted(result);
+    expect(result.status).toBe(65);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('requires the dedicated login at the fixed loopback database');
+    expect(result.stderr).not.toContain(url);
+  });
+
   it(
     'rejects an unterminated database URL while the sender keeps stdin open',
     async () => {
@@ -226,7 +247,7 @@ describe('PROJ-2258 operations principal policy', () => {
     const redisReader = readFileSync(REDIS_READER_PATH, 'utf8');
 
     expect(redisReader).toMatch(
-      /exec \/usr\/bin\/timeout --foreground 15s \\\n  \/usr\/bin\/docker exec bluesky-feed-redis \\\n  redis-cli --raw GET feed:updated_at/,
+      /exec \/usr\/bin\/timeout --signal=KILL 15s \\\n  \/usr\/bin\/docker exec bluesky-feed-redis \\\n  \/bin\/busybox timeout -s KILL 10 \/usr\/local\/bin\/redis-cli --raw GET feed:updated_at/,
     );
     expect(redisReader).not.toContain('$SSH_ORIGINAL_COMMAND');
     expect(redisReader).not.toContain('"$@"');
@@ -237,7 +258,7 @@ describe('PROJ-2258 operations principal policy', () => {
     const directDatabase = readFileSync(DIRECT_DATABASE_PATH, 'utf8');
     const provisioner = readFileSync(PROVISIONER_PATH, 'utf8');
 
-    expect(dispatcher).toContain('/usr/bin/timeout --foreground "$COMMAND_TIMEOUT"');
+    expect(dispatcher).toContain('/usr/bin/timeout --signal=KILL "$remaining"');
     expect(directDatabase).toContain('statement_timeout: DIRECT_DATABASE_STATEMENT_TIMEOUT_MILLIS');
     expect(directDatabase).toContain('query_timeout: DIRECT_DATABASE_QUERY_TIMEOUT_MILLIS');
     expect(provisioner).toContain('/usr/bin/timeout');

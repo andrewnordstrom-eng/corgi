@@ -6,7 +6,7 @@ export LC_ALL=C
 readonly OPERATIONS_HOME='/var/lib/corgi-operations'
 readonly EPOCH_CLI='/opt/bluesky-feed/cli/dist/index.js'
 readonly REDIS_READER='/usr/local/libexec/corgi-read-feed-updated-at'
-readonly COMMAND_TIMEOUT='15s'
+readonly COMMAND_DEADLINE_SECONDS=$((SECONDS + 15))
 readonly INPUT_TIMEOUT_SECONDS='5'
 readonly MAX_DATABASE_URL_BYTES='4096'
 
@@ -19,6 +19,8 @@ read_database_url() {
   local database_url=''
   local extra_input=''
   local read_status=0
+  local input_deadline=$((SECONDS + INPUT_TIMEOUT_SECONDS))
+  local remaining=0
 
   if IFS= read -r -t "$INPUT_TIMEOUT_SECONDS" -n "$((MAX_DATABASE_URL_BYTES + 2))" database_url; then
     :
@@ -31,7 +33,12 @@ read_database_url() {
     return 65
   fi
 
-  if IFS= read -r -t "$INPUT_TIMEOUT_SECONDS" -n 1 extra_input; then
+  remaining=$((input_deadline - SECONDS))
+  if [[ "$remaining" -le 0 ]]; then
+    printf '%s\n' 'corgi-operations: epoch-status input did not close before the deadline' >&2
+    return 65
+  fi
+  if IFS= read -r -t "$remaining" -n 1 extra_input; then
     printf '%s\n' 'corgi-operations: epoch-status accepts exactly one input line' >&2
     return 65
   else
@@ -59,12 +66,26 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         exit 65
         ;;
     esac
+    # Canonical authority and path only: pg URL query fields can override the
+    # destination or request local certificate/key files. Only the password varies.
+    database_url_pattern='^postgres(ql)?://corgi_operations:([A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+@127\.0\.0\.1:5433/bluesky_feed$'
+    if [[ ! "$database_url" =~ $database_url_pattern ]]; then
+      printf '%s\n' 'corgi-operations: epoch-status requires the dedicated login at the fixed loopback database; URL options are forbidden' >&2
+      exit 65
+    fi
+    remaining=$((COMMAND_DEADLINE_SECONDS - SECONDS))
+    if [[ "$remaining" -le 0 ]]; then
+      printf '%s\n' 'corgi-operations: epoch-status exceeded its operation deadline' >&2
+      exit 65
+    fi
+    # This fixed read-only command needs no persistent-state cleanup. Kill the
+    # entire process group at the deadline, including TERM-resistant children.
     exec /usr/bin/env -i \
       HOME="$OPERATIONS_HOME" \
       NODE_ENV=production \
       PATH=/usr/bin:/bin \
       DATABASE_URL="$database_url" \
-      /usr/bin/timeout --foreground "$COMMAND_TIMEOUT" \
+      /usr/bin/timeout --signal=KILL "$remaining" \
       /usr/bin/node "$EPOCH_CLI" epoch status --direct --json
     ;;
   disk-root)

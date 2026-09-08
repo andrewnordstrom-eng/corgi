@@ -50,6 +50,20 @@ require_executable() {
   [[ -x "$path" ]] || fail "required executable is missing: ${path}"
 }
 
+require_host_prerequisites() {
+  local executable=''
+
+  for executable in \
+    /bin/bash /bin/sh /bin/chmod /usr/bin/awk /usr/bin/cmp /usr/bin/curl /usr/bin/cut /usr/bin/df \
+    /usr/bin/dirname /usr/bin/docker /usr/bin/env /usr/bin/getent \
+    /usr/bin/grep /usr/bin/mktemp /usr/bin/rm /usr/bin/test \
+    /usr/bin/id /usr/bin/install /usr/bin/node /usr/bin/passwd /usr/bin/ssh-keygen \
+    /usr/bin/stat /usr/bin/sudo /usr/bin/timeout /usr/bin/tr /usr/sbin/runuser /usr/sbin/useradd \
+    /usr/sbin/userdel /usr/sbin/groupdel /usr/sbin/usermod /usr/sbin/visudo; do
+    require_executable "$executable"
+  done
+}
+
 assert_source_files() {
   [[ -f "${SOURCE_DIR}/corgi-operations-command" ]] ||
     fail "missing dispatcher source: ${SOURCE_DIR}/corgi-operations-command"
@@ -264,6 +278,7 @@ verify_host_policy() {
   local sudoers_content=''
   local path=''
 
+  require_host_prerequisites
   assert_source_files
   assert_production_environment_isolated
   assert_account_shape
@@ -316,14 +331,7 @@ apply_policy() {
   local created_account='false'
 
   require_root
-  for executable in \
-    /bin/bash /usr/bin/awk /usr/bin/cmp /usr/bin/curl /usr/bin/cut /usr/bin/df \
-    /usr/bin/dirname /usr/bin/docker /usr/bin/env /usr/bin/getent \
-    /usr/bin/id /usr/bin/install /usr/bin/node /usr/bin/passwd /usr/bin/ssh-keygen \
-    /usr/bin/stat /usr/bin/sudo /usr/bin/timeout /usr/bin/tr /usr/sbin/runuser /usr/sbin/useradd \
-    /usr/sbin/userdel /usr/sbin/groupdel /usr/sbin/usermod /usr/sbin/visudo; do
-    require_executable "$executable"
-  done
+  require_host_prerequisites
   assert_source_files
   [[ -f /opt/bluesky-feed/cli/dist/index.js ]] || fail 'built epoch CLI is missing at /opt/bluesky-feed/cli/dist/index.js'
   [[ -d /opt/bluesky-feed ]] || fail 'production checkout is missing at /opt/bluesky-feed'

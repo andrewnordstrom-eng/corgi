@@ -42,8 +42,49 @@ It supersedes the historical dependency-audit failures for this candidate.
   dispatcher ran the synthetic CLI after stdin timed out; the corrected version
   rejected the request after five seconds with exit 65. A local regression also
   proved that failed SSH acceptance removes its temporary output directory.
-- Hosted review of the refreshed candidate is pending. These validation results
-  do not authorize a production operation or establish hosted approval.
+- Hosted review 5137397557 on `8a07bdb` completed with changes requested.
+  The subsequent bounded repair and validation are recorded below. These
+  results do not authorize production or establish hosted approval.
+
+## Hosted review repair — 2026-09-08 UTC
+
+- Reproduced arbitrary database destination and query-override dispatch, a
+  SIGTERM-resistant CLI surviving 19 seconds, and missing `mktemp` leaving an
+  incomplete account installation. All reproductions used disposable Linux
+  containers, synthetic credentials and no network or production access.
+- The dispatcher now fixes the login to `corgi_operations` and the endpoint to
+  `127.0.0.1:5433/bluesky_feed`. Only the password varies, using unreserved ASCII
+  or percent encoding. Query/fragment options and alternate destinations are
+  rejected. Three accepted synthetic encodings were checked with the installed
+  PostgreSQL URL parser; all retained the exact host, port, database and user.
+- Input framing shares one five-second budget. The command deducts input time
+  from its 15-second budget and kills the process group with SIGKILL, requiring
+  no persistent-state cleanup for this read-only operation. Whole-second timing
+  has up to one second of granularity plus scheduling latency. A delayed-input
+  Linux probe rejected open input in 4.51 seconds; another stopped the
+  SIGTERM-resistant CLI and child in 14.52 seconds total.
+- Redis has a ten-second in-container SIGKILL deadline and a 15-second host
+  Docker-client deadline. The exact pinned Redis image returned the fixed key;
+  a paused disposable server caused the read to exit 137 in 10.16 seconds,
+  with no remaining `redis-cli` process. No host Docker socket was mounted.
+- Shared apply/verify prerequisites cover every required absolute executable.
+  Four missing-tool probes (`mktemp`, `chmod`, `grep`, `test`) rejected both
+  modes explicitly before account creation. The complete isolated provisioning,
+  repeat apply, verification, protected-config denials and repeat rollback passed.
+- Full `npm run verify` passed: 159 files, 2,257 tests passing and one Linux-only
+  skip on macOS, all backend/CLI/SDK/frontend builds, docs and lint. The first
+  sandboxed attempt failed ten existing local HTTP tests with `listen EPERM`;
+  the rerun with loopback permission passed. ShellCheck, shell syntax and
+  whitespace checks passed. The ten added endpoint rejection cases passed.
+- Historical audit failures below remain historical; the preceding compatibility
+  refresh supersedes them. Optional Windows portability and broad extra guard
+  tests do not demonstrate defects on the supported Linux/macOS platforms.
+  The existing test-shell command uses a fixed script with positional arguments,
+  not interpolated shell source; its repository path derives from `import.meta.url`.
+- The six-file repair awaits local review and then hosted validation/review on
+  its new immutable head. Phase B must verify the live database mapping and
+  grants; no production connection, provisioning, deployment or credential
+  mutation occurred in this repair.
 
 ## Runtime Health Check
 

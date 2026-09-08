@@ -65,18 +65,31 @@ non-printing `gh secret set PRODUCTION_OPERATIONS_SSH_KEY
 
 The environment also needs `PRODUCTION_OPERATIONS_HOST`, fixed user value
 `corgi-operations`, and a dedicated `PRODUCTION_OPERATIONS_DATABASE_URL`.
-That database credential is a PostgreSQL login restricted to `CONNECT`,
+That database credential uses the fixed PostgreSQL login `corgi_operations`,
+restricted to `CONNECT`,
 `USAGE` on the application schema, and `SELECT` on `governance_epochs` and
 `subscribers`, the only tables read by `epoch status --direct`. It is passed as
 one newline-terminated stdin record to `epoch-status`; it is never placed in an
 SSH command argument or stored on the host. Creating that database role and
 credential is a Phase B production mutation and is not performed in Phase A.
 
+The accepted URL shape is
+`postgresql://corgi_operations:<percent-encoded-password>@127.0.0.1:5433/bluesky_feed`
+(`postgres://` is also accepted). The password may contain URI-unreserved ASCII
+or percent-encoded bytes; all other components are fixed. Query parameters,
+fragments, alternative users, hostnames, ports and databases are rejected before
+the CLI starts. This prevents PostgreSQL URL options from redirecting the
+connection or loading local certificate/key files. The endpoint matches
+`docker-compose.prod.yml`; Phase B must verify the live mapping and least-privilege
+role before installing this policy. This same-host connection does not introduce
+remote database TLS configuration. A future remote database requires a separately
+reviewed endpoint and TLS policy.
+
 ## Exact daily-health command surface
 
 | SSH token | Executed host command | Privilege |
 | --- | --- | --- |
-| `epoch-status` | clean environment plus `/usr/bin/timeout --foreground 15s /usr/bin/node /opt/bluesky-feed/cli/dist/index.js epoch status --direct --json`; the dedicated read-only database URL arrives on stdin | `corgi-operations` |
+| `epoch-status` | clean environment plus `/usr/bin/timeout --signal=KILL <remaining-seconds> /usr/bin/node /opt/bluesky-feed/cli/dist/index.js epoch status --direct --json`; the dedicated read-only database URL arrives on stdin | `corgi-operations` |
 | `disk-root` | `/usr/bin/df -P /` | `corgi-operations` |
 | `health-ready` | `/usr/bin/curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3001/health/ready` | `corgi-operations` |
 | `feed-updated-at` | `/usr/bin/sudo -n -- /usr/local/libexec/corgi-read-feed-updated-at` | one fixed sudo target |
@@ -84,7 +97,7 @@ credential is a Phase B production mutation and is not performed in Phase A.
 The Redis helper is root-owned and contains only:
 
 ```text
-/usr/bin/timeout --foreground 15s /usr/bin/docker exec bluesky-feed-redis redis-cli --raw GET feed:updated_at
+/usr/bin/timeout --signal=KILL 15s /usr/bin/docker exec bluesky-feed-redis /bin/busybox timeout -s KILL 10 /usr/local/bin/redis-cli --raw GET feed:updated_at
 ```
 
 The only sudoers entry is:
@@ -97,8 +110,15 @@ This avoids Docker group or socket access. Docker documents that the `docker`
 group grants root-level privileges; the wrapper fixes both the container and
 the Redis command/key instead. The CLI direct database pool additionally fixes
 the PostgreSQL connection timeout at five seconds, server statement timeout at
-five seconds, and client query timeout at seven seconds. The outer 15-second
-deadline bounds startup, cleanup, and any failure outside the database driver.
+five seconds, and client query timeout at seven seconds. Epoch input must finish its one newline-terminated record and EOF within one
+shared five-second budget. Input time is deducted from the 15-second execution
+budget. Bash's whole-second clock gives these budgets up to one second of timing
+granularity, plus OS scheduling latency. At expiration, SIGKILL targets the whole
+process group, including children that ignore SIGTERM. These fixed read-only
+observations create no persistent state that needs a termination grace period.
+The Redis read has its own ten-second SIGKILL deadline inside the container;
+the 15-second host deadline also bounds a stuck Docker client. Stopping that
+client alone would not stop the in-container command.
 
 ## Weekly export is not part of this privilege grant
 
@@ -130,7 +150,8 @@ installation vehicle. It is idempotent: a repeated run validates the existing
 account shape, overwrites only the four managed files with reviewed content,
 validates sudoers before installation, and reruns local policy verification.
 
-Before account creation, the script checks `/etc/corgi/production.env` and its
+Before account creation, the script checks all required absolute executable
+paths; `verify` uses the same prerequisite checks. It then checks `/etc/corgi/production.env` and its
 directory ancestry, and rejects any remaining legacy `.env`, including a
 dangling symlink. It does not migrate configuration or change its permissions.
 The PROJ-2268 host-adoption contract must already be satisfied.
