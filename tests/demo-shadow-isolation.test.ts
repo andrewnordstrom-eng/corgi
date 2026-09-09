@@ -32,6 +32,7 @@ const DEMO_SRC_DIR = fileURLToPath(new URL('../src/demo', import.meta.url));
 const COMPOSE_FILE = fileURLToPath(new URL('../docker-compose.prod.yml', import.meta.url));
 const SERVER_FILE = fileURLToPath(new URL('../src/feed/server.ts', import.meta.url));
 const DEPLOY_FILE = fileURLToPath(new URL('../.github/workflows/deploy.yml', import.meta.url));
+const CI_FILE = fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url));
 const DOCKERFILE = fileURLToPath(new URL('../Dockerfile', import.meta.url));
 const HEALTH_WATCHDOG_FILE = fileURLToPath(new URL('../ops/health-watchdog', import.meta.url));
 const REPO_CONTRACT_FILE = fileURLToPath(
@@ -382,6 +383,85 @@ describe('command spelling and substitution boundaries', () => {
 });
 
 describe('production deploy ordering guards', () => {
+  it('audits every packaged dependency directory with the same policy as CI', () => {
+    const deploy = readFileSync(DEPLOY_FILE, 'utf8');
+    const ci = readFileSync(CI_FILE, 'utf8');
+
+    expect(() => assertPackagedDependencyAuditContract(deploy)).not.toThrow();
+    for (const workspace of ['root', 'cli', 'web', 'web-next']) {
+      const script = workspace === 'root' ? 'scripts' : '../scripts';
+      expect(ci).toContain(
+        `run: node ${script}/audit-allowlist.mjs --workspace=${workspace} --audit-level=moderate`
+      );
+    }
+  });
+
+  it.each(['root', 'cli', 'web', 'web-next'])(
+    'rejects a missing packaged dependency audit for %s',
+    (workspace) => {
+      const deploy = readFileSync(DEPLOY_FILE, 'utf8');
+      const mutated = deploy.split('\n').filter(
+        (line) => !line.includes(`--workspace=${workspace} --audit-level=moderate`)
+      ).join('\n');
+
+      expect(mutated).not.toBe(deploy);
+      expect(() => assertPackagedDependencyAuditContract(mutated)).toThrow(
+        'Packaged dependencies must use the complete fail-closed CI audit policy'
+      );
+    }
+  );
+
+  it.each([
+    'npm audit --omit=dev --audit-level=moderate',
+    'node scripts/audit-allowlist.mjs --workspace=root --audit-level=high',
+    'node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate || true',
+    'NODE_ENV=production node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+    'npm_config_omit=dev node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+    '# node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+  ])('rejects weakened or suppressed promotion audits: %s', (command) => {
+    const deploy = readFileSync(DEPLOY_FILE, 'utf8');
+    const mutated = deploy.replace(
+      'node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+      command
+    );
+
+    expect(mutated).not.toBe(deploy);
+    expect(() => assertPackagedDependencyAuditContract(mutated)).toThrow(
+      'Packaged dependencies must use the complete fail-closed CI audit policy'
+    );
+  });
+
+  it.each(['continue-on-error: true', 'if: false', 'env:\n          NODE_ENV: production'])(
+    'rejects an audit step weakened through %s',
+    (configuration) => {
+      const deploy = readFileSync(DEPLOY_FILE, 'utf8');
+      const marker = '      - name: Audit every packaged dependency workspace\n';
+      const mutated = deploy.replace(marker, `${marker}        ${configuration}\n`);
+
+      expect(mutated).not.toBe(deploy);
+      expect(() => assertPackagedDependencyAuditContract(mutated)).toThrow(
+        'Packaged dependencies must use the complete fail-closed CI audit policy'
+      );
+    }
+  );
+
+  it('rejects packaging before dependency audits finish', () => {
+    const deploy = readFileSync(DEPLOY_FILE, 'utf8');
+    const auditStart = deploy.indexOf('      - name: Audit every packaged dependency workspace\n');
+    const auditEnd = deploy.indexOf('\n      - name:', auditStart + 1);
+    const auditStep = deploy.slice(auditStart, auditEnd);
+    const withoutAudit = deploy.slice(0, auditStart) + deploy.slice(auditEnd);
+    const mutated = withoutAudit.replace(
+      '      - name: Smoke-test packaged native runtime modules\n',
+      `${auditStep}\n      - name: Smoke-test packaged native runtime modules\n`
+    );
+
+    expect(mutated).not.toBe(deploy);
+    expect(() => assertPackagedDependencyAuditContract(mutated)).toThrow(
+      'Dependency audits must run after installation and before packaging'
+    );
+  });
+
   it('blocks changed migrations before rollback is armed', () => {
     const deploy = readFileSync(DEPLOY_FILE, 'utf8');
 
@@ -3060,6 +3140,7 @@ function assertExactShaPromotionContract(workflow: string): void {
     throw new Error('Remote script must receive workflow expressions through envs');
   }
   assertLifecycleScriptContract(runnerScript, remoteScript);
+  assertPackagedDependencyAuditContract(workflow);
   assertMigrationBlockContract(remoteScript);
   assertRuntimeRestartContract(remoteScript);
   assertHostDeploymentLock(remoteScript);
@@ -3623,6 +3704,29 @@ function runReceiptValidation(
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function assertPackagedDependencyAuditContract(workflow: string): void {
+  const marker = '      - name: Audit every packaged dependency workspace\n';
+  const start = workflow.indexOf(marker);
+  const end = workflow.indexOf('\n      - name:', start + marker.length);
+  const expected = [
+    '      - name: Audit every packaged dependency workspace',
+    '        run: |',
+    '          set -euo pipefail',
+    '          node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+    '          (cd cli && node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate)',
+    '          (cd web && node ../scripts/audit-allowlist.mjs --workspace=web --audit-level=moderate)',
+    '          (cd web-next && node ../scripts/audit-allowlist.mjs --workspace=web-next --audit-level=moderate)',
+  ].join('\n');
+  if (start < 0 || end < start || workflow.slice(start, end).trimEnd() !== expected) {
+    throw new Error('Packaged dependencies must use the complete fail-closed CI audit policy');
+  }
+  const installStart = workflow.indexOf('      - name: Install exact-SHA dependencies\n');
+  const packageStart = workflow.indexOf('      - name: Package verified runtime artifacts\n');
+  if (installStart < 0 || start <= installStart || packageStart <= end) {
+    throw new Error('Dependency audits must run after installation and before packaging');
   }
 }
 
