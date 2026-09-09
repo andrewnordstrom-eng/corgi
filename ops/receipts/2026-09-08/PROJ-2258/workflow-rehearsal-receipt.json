@@ -1,0 +1,24 @@
+{
+  "transport": "synthetic SSH; actual workflow Bash/GNU date/timeout",
+  "production_touched": false,
+  "cases_passed": [
+    "success",
+    "empty-key",
+    "malformed-time",
+    "stale-time",
+    "future-time",
+    "disk-malformed",
+    "disk-critical",
+    "missing-secret",
+    "disk-79",
+    "disk-80",
+    "disk-85",
+    "disk-89",
+    "age-1800",
+    "age-1801",
+    "fail-epoch-status",
+    "fail-disk-root",
+    "fail-health-ready",
+    "fail-feed-updated-at"
+  ]
+}

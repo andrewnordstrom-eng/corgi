@@ -1,0 +1,24 @@
+{
+  "production_touched": false,
+  "cases_passed": [
+    "apply_verify_reject_reapply_rollback_idempotency",
+    "killed_during_preparation_state",
+    "killed_during_preparation_direct.js.map",
+    "killed_during_preparation_direct.js",
+    "killed_after_1_live_replacements",
+    "killed_after_2_live_replacements",
+    "killed_during_rollback",
+    "partial_root_scratch_recovery",
+    "reject_candidate_drift_before_replacement",
+    "reject_manifest_drift_before_replacement",
+    "reject_baseline_drift_before_replacement",
+    "reject_corrupt_backup_without_live_mutation",
+    "reject_symlink_dist_direct.js",
+    "reject_symlink_dist_commands",
+    "reject_symlink_packet_direct.js",
+    "reject_hardlink_without_inventory_change",
+    "reject_concurrent_production_deploy",
+    "completed_deploy_before_lock_does_not_mutate_retired_directory",
+    "reject_writable_packet_ancestry"
+  ]
+}
