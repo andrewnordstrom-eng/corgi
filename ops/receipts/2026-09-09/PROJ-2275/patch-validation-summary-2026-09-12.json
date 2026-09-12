@@ -1,0 +1,261 @@
+{
+  "node": "v20.19.0",
+  "platform": "linux",
+  "arch": "arm64",
+  "uid": 1000,
+  "availableParallelism": 4,
+  "phases": [
+    {
+      "label": "install-root",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "8bc97bcc7e2e159d1b364b2d9efabaf3e85c76376a819897150a6279bde6f7de"
+    },
+    {
+      "label": "audit-root",
+      "command": [
+        "node",
+        "/validation/source/scripts/audit-allowlist.mjs",
+        "--workspace=root",
+        "--audit-level=moderate"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "label": "install-cli",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/validation/source/cli",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "53fb7831ef80587db6fe6ea21ca1a96e3f417cd0d4794fba661529bfd3b8710c"
+    },
+    {
+      "label": "audit-cli",
+      "command": [
+        "node",
+        "/validation/source/scripts/audit-allowlist.mjs",
+        "--workspace=cli",
+        "--audit-level=moderate"
+      ],
+      "cwd": "/validation/source/cli",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "label": "install-web",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/validation/source/web",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "6539cd6cca4c50d38644c89624a19e890e6928ea5bd4758cb0ab93ef8294ac31"
+    },
+    {
+      "label": "audit-web",
+      "command": [
+        "node",
+        "/validation/source/scripts/audit-allowlist.mjs",
+        "--workspace=web",
+        "--audit-level=moderate"
+      ],
+      "cwd": "/validation/source/web",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "label": "install-web-next",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/validation/source/web-next",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "edbeff5a7ac74a4d3fc3088e71e8bd7c5c440fac20c3a2640de86813241204d2"
+    },
+    {
+      "label": "audit-web-next",
+      "command": [
+        "node",
+        "/validation/source/scripts/audit-allowlist.mjs",
+        "--workspace=web-next",
+        "--audit-level=moderate"
+      ],
+      "cwd": "/validation/source/web-next",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "label": "verify-dependency",
+      "command": [
+        "npm",
+        "run",
+        "verify"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "3e7390d77304ebe47b00afd027c7764ad11ee66dc3b4682e00e0f650aa6c3a5f"
+    },
+    {
+      "label": "zip-regression",
+      "command": [
+        "node",
+        "/validation/zip-regression.cjs"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "dfa2fc3bc7f35305082a782106872cbe7b7702c5a621a6b88f87049b296426d3"
+    },
+    {
+      "label": "verify-combined",
+      "command": [
+        "npm",
+        "run",
+        "verify"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "4f7fe5e1a4c0e5d005865f980bf35a02ccc23a5e373c4d61bcdc11f323ba0212"
+    },
+    {
+      "label": "runtime",
+      "command": [
+        "node",
+        "/validation/runtime-probe.mjs"
+      ],
+      "cwd": "/validation/source",
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "logSha256": "4aa4b258d315054d05d6263a8db8c89fc0fbd78f7707fba29f63d505af811c95"
+    }
+  ],
+  "assessed_at": "2026-09-12",
+  "status": "local-validation-pass-hosted-review-pending",
+  "parent_head": "c5c842c7bddf4b6fb407b042cc8498e80fb7c164",
+  "implementation_patch_sha256": "c6efca3311e0f0a63f3afd6f49164f254230d0cf041ef64ae417dff79268e9d7",
+  "test_counts": {
+    "dependency": 2258,
+    "combined": 2273,
+    "files_each": 159
+  },
+  "policy_overlay_head": "888f0af0239d440e1471a8e57a9c0feb74ecf042",
+  "coderabbit_cli": {
+    "type": "complete",
+    "status": "review_completed",
+    "findings": 0,
+    "reviewedFiles": [
+      "package-lock.json",
+      "package.json"
+    ]
+  },
+  "coderabbit_log_sha256": "ad7b1fc759cc5b43ec4829fd8a9e450cd22bc30e89a50cf83ae6e4f4fce3f798",
+  "runtime": {
+    "status": "pass",
+    "model": "Xenova/all-MiniLM-L6-v2",
+    "dtype": "q8",
+    "node": "v20.19.0",
+    "platform": "linux",
+    "arch": "arm64",
+    "uid": 1000,
+    "elapsedMs": 2089.575667,
+    "rowCount": 3,
+    "dimensions": 384,
+    "norms": [
+      1.0000001418293007,
+      0.9999999386442117,
+      1.0000003048975128
+    ],
+    "similarities": {
+      "birds": 0.5568235217721855,
+      "database": -0.07573798383336243
+    },
+    "guardPositiveControlPassed": true,
+    "admZipResolvedPath": "/validation/source/node_modules/adm-zip/adm-zip.js",
+    "forbiddenRuntimeLoads": [],
+    "observedNativeLoads": [
+      "/validation/source/node_modules/@img/sharp-linux-arm64/lib/sharp-linux-arm64-0.35.4.node",
+      "/validation/source/node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node",
+      "/validation/source/node_modules/onnxruntime-node/dist/backend.js",
+      "/validation/source/node_modules/onnxruntime-node/dist/binding.js",
+      "/validation/source/node_modules/onnxruntime-node/dist/index.js",
+      "/validation/source/node_modules/onnxruntime-node/dist/version.js"
+    ],
+    "scope": "Observed one real Corgi model initialization and embedding batch; not a universal non-reachability proof."
+  },
+  "zip_regression": {
+    "status": "pass",
+    "version": "0.6.1",
+    "checks": [
+      "file symlink rejected with overwrite enabled",
+      "directory symlink rejected with overwrite enabled",
+      "outside sentinel unchanged",
+      "ordinary extraction succeeds"
+    ]
+  },
+  "audit_results": {
+    "root": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate).",
+    "cli": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate).",
+    "web": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate).",
+    "web-next": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate)."
+  },
+  "root_engine_warning_count": 16,
+  "input_hashes": {
+    "package.json": "3ae979fb8fd211f37c3351b5f3fdba0b9109644feb5bf679ed4869c109691faa",
+    "package-lock.json": "8e0c6b55e29031d4f016870a70bc471a7bfd79000cd3c9b35ac867e7aee228cb",
+    "cli/package.json": "9c6de74e38a87157495faf55c74d9e8d8da256b7d77276a452f5fe181eb351ef",
+    "cli/package-lock.json": "6cb9babed6ed7b01e033a18b8dfe5d7199910a744819e06e2a0fc7879546ba96",
+    "web/package.json": "b4cea740428ca93c7c12096124d7e610556b50e2df6fb75fbed0c2cda08f589b",
+    "web/package-lock.json": "3ca27900d8d929f76b1ab2811d57b49eafcde8c39643dc6529f3ff80d90620d5",
+    "web-next/package.json": "d1b101d650480d534f54abecdfd2de4b526ea24d1d2ec1cf0078567605ac55f4",
+    "web-next/package-lock.json": "2610921b172ef5e7bcf97313370811aa0844ef2b2456a56d01e69c38094ee576",
+    "scripts/audit-allowlist.mjs": "8279603234edd2284d4bbf24f2969940ae2d1c9bfbf298f6eff1d20f04c9bc8e"
+  },
+  "evidence_hashes": {
+    "run.mjs": "b01a239d8037f53d03ece5294ec6692fc5eaa3f2233ebc25b1d13d32ef418ca3",
+    "runtime-probe.mjs": "7eccc86cd3bacb3037044d74ca172ca75c8e51f6ed62856afec74b23dfda3a60",
+    "zip-regression.cjs": "988267ce580746a51862d5cfa2bff68d9e2435acc9ecca02609f65381134a84e",
+    "dependency-source-manifest.json": "00cd08954a5982d12925b95e8814798fce1dd6e19056bb2811da10c6cee71f57",
+    "combined-source-manifest.json": "a21068ab5df7b6150efcb48ffd04c64d9c991a495566d7d3f4b87931954ffed6"
+  },
+  "limits": [
+    "Linux ARM64 only; x64 and production qualification not established",
+    "Existing Node engine warnings remain",
+    "Hosted current-head review pending",
+    "No merge, production deployment or advisory exception"
+  ]
+}
