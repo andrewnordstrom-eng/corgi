@@ -1,0 +1,25 @@
+{
+  "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+  "server_version": "16.15",
+  "network": "none",
+  "production_touched": false,
+  "public_schema_table_sequence_drift_failed_closed": true,
+  "positive_selects": 2,
+  "negative_cases_passed": [
+    "temporary_table",
+    "insert",
+    "update",
+    "delete",
+    "create_schema",
+    "create_table",
+    "read_other_table",
+    "assume_feed"
+  ],
+  "feed_temp_preserved": true,
+  "repeat_apply_failed_closed": true,
+  "rollback_role_removed": true,
+  "rollback_public_privileges_restored": true,
+  "changed_role_inventory_failed_closed": true,
+  "login_enabled_rollback_failed_closed": true,
+  "note": "NOLOGIN role tested with SET SESSION AUTHORIZATION; credential authentication remains separate."
+}
