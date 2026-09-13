@@ -1,0 +1,54 @@
+{
+  "status": "proposal-only-not-approved-not-active",
+  "advisory": "GHSA-vwc7-r8mq-g2x9",
+  "package": "adm-zip",
+  "locked_version": "0.6.0",
+  "assessed_at": "2026-09-09",
+  "facts": [
+    {
+      "label": "verified",
+      "source": "https://github.com/advisories/GHSA-vwc7-r8mq-g2x9",
+      "finding": "Advisory lists 0.5.9 through 0.6.0, no patched version, moderate CVSS 6.8. Existing destination symlink plus overwrite-enabled extraction can modify files writable by the extracting process."
+    },
+    {
+      "label": "verified",
+      "source": "src/scoring/topics/embedder.ts:13; node_modules/@huggingface/transformers/src/backends/onnx.js:23; node_modules/onnxruntime-node/package.json:21,46",
+      "finding": "The app imports Transformers, which imports ONNX Runtime. ONNX package main is dist/index.js; its installer is a separate postinstall script."
+    },
+    {
+      "label": "verified",
+      "source": "node_modules/onnxruntime-node/script/install.js:22; node_modules/onnxruntime-node/script/install-utils.js:11,183",
+      "finding": "The installer imports adm-zip and invokes extractEntryTo with overwrite enabled. No adm-zip or installer reference was found by rg in onnxruntime-node/dist."
+    },
+    {
+      "label": "inferred",
+      "source": "Installed source chain above; controlled workflow clean installs use --ignore-scripts before packaging",
+      "finding": "No current app runtime path to this extraction call has been identified. Suppressed installer execution removes the identified invocation from controlled promotion. This is not a proof of absence across arbitrary execution paths; Linux app/model tracing would strengthen it."
+    },
+    {
+      "label": "cant-verify-here",
+      "source": "Current candidate validation does not execute a Linux production release or enumerate every external installer caller",
+      "finding": "No universal production-unaffected or remote-exploitation conclusion is claimed."
+    }
+  ],
+  "proposed_decision_owner": "Andrew Nordstrom, subject to explicit acceptance",
+  "proposed_tracking_issue": "PROJ-2275, subject to updating acceptance criteria",
+  "proposed_exception_scope": "Only GHSA-vwc7-r8mq-g2x9 in root workspace; no inherited package-wide or cross-workspace exception",
+  "proposed_expiry": "2026-09-16T00:00:00Z; refresh proposal if approval is delayed; no automatic renewal",
+  "prerequisites_before_any_activation": [
+    "Confirm no supported patched release at decision time.",
+    "All other advisories must be cleared at the combined candidate, including the separate dependency repair.",
+    "Review and approve the exact allowlist entry and amend the applicable all-advisories-cleared acceptance language explicitly.",
+    "Verify CI and promotion use the shared policy, preserve lifecycle suppression, and qualify the exact Linux runtime candidate.",
+    "Resolve or explicitly scope the alternative installer paths and private host caller uncertainty; do not claim that every installation is protected.",
+    "Preserve separate release-freeze, exact-head review, merge and production approval gates."
+  ],
+  "revocation_conditions": [
+    "Patched supported release becomes available.",
+    "New runtime extraction path or materially different exploit evidence is found.",
+    "Lifecycle suppression or trusted build environment no longer holds.",
+    "Hard expiry is reached."
+  ],
+  "impact_if_exploited": "Unauthorized file overwrite within the extracting process permissions. Later code execution is possible only if an overwritten artifact is subsequently executed or trusted; that consequence has not been demonstrated in Corgi.",
+  "change_in_this_candidate": "None to the empty ALLOWLIST; no risk acceptance is activated."
+}

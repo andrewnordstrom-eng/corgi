@@ -80,13 +80,13 @@ jobs:
           (cd web && npm ci --ignore-scripts)
           (cd web-next && npm ci --ignore-scripts)
 
-      - name: Audit every shipped runtime workspace
+      - name: Audit every packaged dependency workspace
         run: |
           set -euo pipefail
-          npm audit --omit=dev --audit-level=moderate
-          (cd cli && npm audit --omit=dev --audit-level=moderate)
-          (cd web && npm audit --omit=dev --audit-level=moderate)
-          (cd web-next && npm audit --omit=dev --audit-level=moderate)
+          node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate
+          (cd cli && node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate)
+          (cd web && node ../scripts/audit-allowlist.mjs --workspace=web --audit-level=moderate)
+          (cd web-next && node ../scripts/audit-allowlist.mjs --workspace=web-next --audit-level=moderate)
 
       - name: Verify exact SHA before production mutation
         env:

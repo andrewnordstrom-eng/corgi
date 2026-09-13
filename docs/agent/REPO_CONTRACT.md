@@ -4,7 +4,7 @@ Status: canonical repo contract
 Owner: bluesky-feed
 Service class: production_service
 Contract version: 2
-Last updated: 2026-09-07
+Last updated: 2026-09-09
 Last verified: not yet rehearsed for the 2026-08-02 workflow revision
 
 > Canonical reference for any human or tooling operating in this repo.
@@ -273,8 +273,13 @@ npm run cli -- --help
    and group, distinct from the deployment account, and the active MainPID must
    be owned by that service user; otherwise both host admissions fail before
    transfer or mutation. The GitHub runner builds and verifies the exact SHA
-   without production secrets, runs raw moderate-threshold audits for every
-   shipped workspace, and stamps a checksummed runtime archive. It also verifies
+   without production secrets and runs `scripts/audit-allowlist.mjs` at the
+   moderate threshold for root, CLI, web and web-next, matching CI. Audits include
+   development dependencies because the archive retains whole dependency
+   directories. The shared policy fails closed on audit errors and permits only
+   explicitly tracked, unexpired, workspace-scoped advisory exceptions approved
+   through a separate risk decision. It stamps a checksummed runtime archive
+   only after validation succeeds. It also verifies
    hardcoded SHA-256 digests for the SSH/SCP runtime binaries before exposing any
    production credential, then forces the commit-pinned action wrappers to load
    only those local payloads. The archive's 64-character digest is a separate job

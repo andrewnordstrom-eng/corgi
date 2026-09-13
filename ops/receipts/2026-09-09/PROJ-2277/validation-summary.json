@@ -1,0 +1,107 @@
+{
+  "issue": "PROJ-2277",
+  "status": "local-validation-and-coderabbit-review-complete",
+  "base_commit": "a09edeafaf085121d1340a543874de6362e1e42a",
+  "candidate_patch_sha256": "8bdacdf3573c5fb1220d8d7ce79e48573b464158dd1ea6da340ef9a0e8288906",
+  "changed_file_sha256": {
+    ".github/workflows/deploy.yml": "742801371aff1da88352c493d0cbda39ffacda3888989d9ee9c95ac4ba94f6d8",
+    "docs/agent/REPO_CONTRACT.md": "f73b528e22b3482dc0f4ba55240bd745a393e37a823eafa2f8265287c88096d6",
+    "tests/demo-shadow-isolation.test.ts": "07b8bbbbd670b7bfc53d222f68d67bff88d499077f0c00ff5d8d23f283beeb6e"
+  },
+  "unchanged_file_sha256": {
+    "package.json": "6c72ea2c351f5adb644cc24d9473aa60102f4edeb99014927cd270e55a70e149",
+    "package-lock.json": "05b526e74d0d128335ad2bc1f57d83279b509b788356b3d2fd9c46c587742789",
+    "cli/package.json": "9c6de74e38a87157495faf55c74d9e8d8da256b7d77276a452f5fe181eb351ef",
+    "cli/package-lock.json": "6cb9babed6ed7b01e033a18b8dfe5d7199910a744819e06e2a0fc7879546ba96",
+    "web/package.json": "b4cea740428ca93c7c12096124d7e610556b50e2df6fb75fbed0c2cda08f589b",
+    "web/package-lock.json": "3ca27900d8d929f76b1ab2811d57b49eafcde8c39643dc6529f3ff80d90620d5",
+    "web-next/package.json": "bf383d944c5cb0f44661e5591e446efa0fc0f96daf9cd2d4a4ca353f51863dc2",
+    "web-next/package-lock.json": "eff84b49246ec57447c70c46c9869873d5afc0450928d4c0ad77e103184c372b",
+    "scripts/audit-allowlist.mjs": "8279603234edd2284d4bbf24f2969940ae2d1c9bfbf298f6eff1d20f04c9bc8e"
+  },
+  "commands": {
+    "clean_installs": "npm ci --ignore-scripts in root, cli, web, web-next",
+    "focused": "node node_modules/vitest/vitest.mjs run tests/demo-shadow-isolation.test.ts tests/audit-allowlist-script.test.ts",
+    "full": "npm run verify with tracked public .env.example values in child environment, excluding NODE_ENV",
+    "audits": "node scripts/audit-allowlist.mjs --workspace=<workspace> --audit-level=moderate from corresponding directory; ../scripts for child workspaces"
+  },
+  "validation": {
+    "clean_installs": 4,
+    "focused_tests_passed": 432,
+    "full_test_files_passed": 159,
+    "full_tests_passed": 2272,
+    "full_tests_skipped": 1,
+    "verify_exit_code": 0,
+    "docs_recheck_exit_code": 0,
+    "diff_check_exit_code": 0
+  },
+  "audit_outcomes": [
+    {
+      "workspace": "root",
+      "exit_code": 1,
+      "output": "audit-allowlist: 6 non-allowlisted vulnerability(s) >= moderate:\n  - GHSA-GQVV-2MRQ-WPJV [moderate] (@hono/node-server, @modelcontextprotocol/sdk, hono) https://github.com/advisories/GHSA-gqvv-2mrq-wpjv\n  - GHSA-G6GW-C38X-MQFC [moderate] (@hono/node-server, @modelcontextprotocol/sdk, hono) https://github.com/advisories/GHSA-g6gw-c38x-mqfc\n  - GHSA-CRVJ-82CR-HJCX [moderate] (@hono/node-server, @modelcontextprotocol/sdk, hono) https://github.com/advisories/GHSA-crvj-82cr-hjcx\n  - GHSA-VWC7-R8MQ-G2X9 [moderate] (@huggingface/transformers, adm-zip, onnxruntime-node) https://github.com/advisories/GHSA-vwc7-r8mq-g2x9\n  - GHSA-RGJ7-G3M4-5G8C [high] (@huggingface/transformers, sharp) https://github.com/advisories/GHSA-rgj7-g3m4-5g8c\n  - GHSA-82FW-GWWQ-J7X9 [moderate] (@vitest/mocker, vitest) https://github.com/advisories/GHSA-82fw-gwwq-j7x9\naudit-allowlist: FAIL\n"
+    },
+    {
+      "workspace": "cli",
+      "exit_code": 0,
+      "output": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate).\n"
+    },
+    {
+      "workspace": "web",
+      "exit_code": 0,
+      "output": "audit-allowlist: PASS (no non-allowlisted vulnerabilities >= moderate).\n"
+    },
+    {
+      "workspace": "web-next",
+      "exit_code": 1,
+      "output": "audit-allowlist: 4 non-allowlisted vulnerability(s) >= moderate:\n  - GHSA-2883-XCG3-V3HH [high] (js-yaml) https://github.com/advisories/GHSA-2883-xcg3-v3hh\n  - GHSA-P293-QW3H-JR36 [critical] (next) https://github.com/advisories/GHSA-p293-qw3h-jr36\n  - GHSA-2XP9-VWFH-VXW4 [critical] (next) https://github.com/advisories/GHSA-2xp9-vwfh-vxw4\n  - GHSA-RGJ7-G3M4-5G8C [high] (next, sharp) https://github.com/advisories/GHSA-rgj7-g3m4-5g8c\naudit-allowlist: FAIL\n"
+    }
+  ],
+  "prior_attempts": [
+    "Initial test invocation lacked public example configuration; not acceptance evidence.",
+    "Sandboxed full verify failed 10 HTTP tests with listen EPERM; full authorized loopback run passed.",
+    "Sandboxed audits failed closed on DNS error; network-enabled audit outcomes are recorded above."
+  ],
+  "review": {
+    "status": "completed",
+    "command": "coderabbit review --agent --uncommitted",
+    "exit_code": 0,
+    "reviewed_patch_sha256": "8bdacdf3573c5fb1220d8d7ce79e48573b464158dd1ea6da340ef9a0e8288906",
+    "reviewed_files": [
+      ".github/workflows/deploy.yml",
+      "docs/agent/REPO_CONTRACT.md",
+      "tests/demo-shadow-isolation.test.ts"
+    ],
+    "review_log_sha256": "4de7af4a19f234157fcef6394cc0500c4e2d82911a166706197e57aa6ee9a75f",
+    "findings": [
+      {
+        "severity": "trivial",
+        "file": "tests/demo-shadow-isolation.test.ts",
+        "line": 391,
+        "summary": "Strengthen CI command assertions to reject commented or disabled steps and environment-based omissions.",
+        "disposition": "deferred",
+        "reason": "Useful future CI-policy test hardening, not a demonstrated defect in the current workflow. The unchanged CI steps at .github/workflows/ci.yml:77-82 and :152-158 were personally inspected: executable moderate-threshold wrapper calls in their correct directories, without failure suppression or dev omission. The changed promotion step already has negative cases for omissions, suppression and ordering. A generalized CI validator is outside this bounded repair."
+      }
+    ],
+    "blocking_findings": 0,
+    "claim_limit": "External CLI review of the three implementation files only. Validation receipts were prepared locally and were not part of this export. This is not hosted exact-head approval or release approval."
+  },
+  "preserved_pr": {
+    "url": "https://github.com/andrewnordstrom-eng/corgi/pull/412",
+    "head": "c5c842c7bddf4b6fb407b042cc8498e80fb7c164",
+    "draft": true,
+    "state": "OPEN"
+  },
+  "log_sha256": {
+    "focused-tests": "e2db1907950ed17457b7ea980063dd7718165616478575ba74b947f67b467c7a",
+    "verify-live": "63f380d17ea1cc47c2fd6c4d61eae0829ab9e645dc5053027a671529fc2baae3",
+    "install-root": "38308843c1f27cd91e8d8bbab19f131c1116475a86aad7e231802e1e7f090335",
+    "install-cli": "5b8f89b547ec5918f9088256248abd1a2794f4e83a7d59c73231471076a8b364",
+    "install-web": "03933a5e6827cb195fe65df83d8675254b4e8d74c52ec6b03ed1cddde775a5e7",
+    "install-web-next": "b03560b1b03177ccac8ba3ce0745cfd37df5e77574405935da0551c3587ebd34",
+    "audit-live-root": "e1377fc097ecdaca0b89ab9c53cda969d62ff8fef9535b4d3894d4a82973b84f",
+    "audit-live-cli": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf",
+    "audit-live-web": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf",
+    "audit-live-web-next": "9131cc0504f2bb57f7a34b95bb025ca5ba3388f18c6158b07644c5831d7a1f4c"
+  }
+}
