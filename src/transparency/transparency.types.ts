@@ -13,6 +13,79 @@ export interface ScoreComponent {
   weighted: number;
 }
 
+export type TransparencySnapshotStatus = 'current' | 'last_known_good';
+export type TransparencyFeedPlacement = 'ranked' | 'pinned_announcement';
+
+interface TransparencyFeedScoredItem {
+  position: number;
+  epoch_id: number;
+  ranked_position: number;
+  post_uri: string;
+  base_score: number;
+  publication_adjustment: number;
+  final_score: number;
+  components: {
+    recency: ScoreComponent;
+    engagement: ScoreComponent;
+    bridging: ScoreComponent;
+    source_diversity: ScoreComponent;
+    relevance: ScoreComponent;
+  };
+  source_score_run_id: string;
+  scored_at: string;
+  classification_method: 'keyword' | 'embedding';
+  engagement_only_position: number;
+}
+
+export interface TransparencyFeedRankedItem extends TransparencyFeedScoredItem {
+  placement: 'ranked';
+}
+
+export interface TransparencyFeedScoredPinnedItem extends TransparencyFeedScoredItem {
+  placement: 'pinned_announcement';
+}
+
+export interface TransparencyFeedPinnedItem {
+  position: number;
+  epoch_id: null;
+  ranked_position: null;
+  placement: 'pinned_announcement';
+  post_uri: string;
+  base_score: null;
+  publication_adjustment: null;
+  final_score: null;
+  components: null;
+  source_score_run_id: null;
+  scored_at: null;
+  classification_method: null;
+  engagement_only_position: null;
+}
+
+export type TransparencyFeedItem =
+  | TransparencyFeedRankedItem
+  | TransparencyFeedScoredPinnedItem
+  | TransparencyFeedPinnedItem;
+
+export interface TransparencyFeedSnapshot {
+  schema_version: 1;
+  feed_uri: string;
+  presentation_snapshot_id: string;
+  publication_run_id: string;
+  epoch_id: number;
+  published_at: string;
+  status: TransparencySnapshotStatus;
+  total_published_items: number;
+  expected_refresh_seconds: number;
+  active_weights: {
+    recency: number;
+    engagement: number;
+    bridging: number;
+    source_diversity: number;
+    relevance: number;
+  };
+  items: TransparencyFeedItem[];
+}
+
 /**
  * Per-topic breakdown entry for the relevance component.
  * Shows how each topic in a post's topic vector contributed to its relevance score.
@@ -35,6 +108,9 @@ export interface PostExplanation {
   epoch_description: string | null;
   total_score: number;
   rank: number;
+  rank_scope: 'published_snapshot' | 'score_run';
+  published_position: number | null;
+  publication_snapshot_id: string | null;
   components: {
     recency: ScoreComponent;
     engagement: ScoreComponent;

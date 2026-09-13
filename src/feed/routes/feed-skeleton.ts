@@ -32,6 +32,7 @@ import {
   noteFeedRequestTrackingAbandonedBackendOperation,
 } from '../request-tracker.js';
 import { getCommunityFeedSnapshot, getCommunityFeedSnapshotById } from '../snapshot-cache.js';
+import { composeFeedItems, parsePinnedAnnouncementUri } from '../pinned-composition.js';
 
 const MIN_CURSOR_OFFSET = 0;
 const MAX_CURSOR_OFFSET = 10000;
@@ -380,28 +381,22 @@ export function registerFeedSkeleton(app: FastifyInstance, options?: RegisterFee
       let pinnedUri: string | null = null;
       if (isFirstPage && community.includePinnedAnnouncements) {
         const pinnedData = await redis.get('bot:latest_announcement');
-        if (pinnedData) {
-          try {
-            const { uri } = JSON.parse(pinnedData);
-            // Don't duplicate if already in feed
-            if (uri && !postUris.includes(uri)) {
-              pinnedUri = uri;
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
+        pinnedUri = parsePinnedAnnouncementUri(pinnedData);
       }
 
       // Build response with pinned post first
-      const feedItems = pinnedUri
-        ? [{ post: pinnedUri }, ...postUris.slice(0, limit - 1).map((uri) => ({ post: uri }))]
-        : postUris.map((uri) => ({ post: uri }));
+      const composedItems = composeFeedItems(postUris, limit, pinnedUri);
+      const feedItems = composedItems.map((item) => ({ post: item.postUri }));
       const servedPostUris = feedItems.map((item) => item.post);
-      const rankedItemsServed = pinnedUri ? Math.max(feedItems.length - 1, 0) : feedItems.length;
+      const pinWasInserted = composedItems.some((item) => item.rankedPosition === null);
+      const rankedItemsServed = composedItems.filter(
+        (item) => item.rankedPosition !== null
+      ).length;
 
       const nextOffset = offset + rankedItemsServed;
-      const hasMore = pinnedUri ? postUris.length >= limit : postUris.length === limit;
+      const hasMore = pinWasInserted
+        ? postUris.length >= limit
+        : postUris.length === limit;
       const responseTimeMs = Math.round(performance.now() - startTime);
 
       logger.debug(

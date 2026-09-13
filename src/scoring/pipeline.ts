@@ -15,7 +15,11 @@ import { db } from '../db/client.js';
 import { redis } from '../db/redis.js';
 import type { PoolClient } from 'pg';
 import { config } from '../config.js';
-import { invalidateCurrentFeedSnapshot } from '../feed/snapshot-cache.js';
+import {
+  CURRENT_FEED_GENERATION_KEY,
+  CURRENT_FEED_SNAPSHOT_KEY,
+  clearCurrentFeedSnapshotMemoryCache,
+} from '../feed/snapshot-cache.js';
 import { logger } from '../lib/logger.js';
 import { getActiveEpoch } from '../db/queries/epochs.js';
 import { randomUUID } from 'crypto';
@@ -41,24 +45,44 @@ import type { ContentRules } from '../governance/governance.types.js';
 import { invalidateGovernanceGateCacheStrict } from '../ingestion/governance-gate.js';
 import { updateScoringStatus } from '../admin/status-tracker.js';
 import { calculateAuthorConcentration } from '../transparency/metrics.js';
-import { applyFeedUrlDedup, FEED_URL_DEDUP_DECAY } from './feed-publication.js';
+import {
+  applyFeedUrlDedup,
+  buildFeedPublicationArtifact,
+  digestFeedPublicationArtifact,
+  FEED_URL_DEDUP_DECAY,
+  sealFeedPublicationExplanation,
+  sealFeedPublicationStorage,
+  type FeedPublicationExplanationCandidate,
+  type PublicFeedScoreComponents,
+  type PublicFeedWeights,
+} from './feed-publication.js';
+import {
+  CURRENT_FEED_PUBLICATION_KEYS,
+  LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS,
+} from './feed-publication-keys.js';
 
 // Maximum time allowed for a single scoring run.
 const SCORING_TIMEOUT_MS = config.SCORING_TIMEOUT_MS;
 const SCORING_CANDIDATE_LIMIT = config.SCORING_CANDIDATE_LIMIT;
 const SQL_BOUNDARY_KEYWORD_PATTERN = /^[a-z0-9][a-z0-9\s-]*$/;
 const EPOCH_METRICS_CURRENT_FEED_RETENTION_ROWS = 24;
-const FEED_CURRENT_KEY = 'feed:current';
-const FEED_LAST_KNOWN_GOOD_KEY = 'feed:last_known_good';
+const FEED_CURRENT_KEY = CURRENT_FEED_PUBLICATION_KEYS.sortedSet;
+const FEED_LAST_KNOWN_GOOD_KEY = LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.sortedSet;
 const FEED_EMPTY_RESULT_SKIPPED_TOTAL_KEY = 'feed:empty_result_skipped_total';
 const FEED_LAST_EMPTY_RESULT_AT_KEY = 'feed:last_empty_result_at';
 const FEED_STAGED_CURRENT_PREFIX = 'feed:staging:current:';
 const FEED_STAGED_LAST_KNOWN_GOOD_PREFIX = 'feed:staging:last_known_good:';
+const FEED_STAGED_ORDER_CURRENT_PREFIX = 'feed:staging:order:current:';
+const FEED_STAGED_ORDER_LAST_KNOWN_GOOD_PREFIX = 'feed:staging:order:last_known_good:';
+const FEED_STAGED_EXPLANATIONS_CURRENT_PREFIX = 'feed:staging:explanations:current:';
+const FEED_STAGED_EXPLANATIONS_LAST_KNOWN_GOOD_PREFIX = 'feed:staging:explanations:last_known_good:';
+const FEED_STAGED_EXPLANATION_SEALS_CURRENT_PREFIX = 'feed:staging:explanation-seals:current:';
+const FEED_STAGED_EXPLANATION_SEALS_LAST_KNOWN_GOOD_PREFIX = 'feed:staging:explanation-seals:last_known_good:';
 const FEED_STAGED_METADATA_PREFIX = 'feed:staging:metadata:';
 const FEED_STAGING_TTL_SECONDS = Math.ceil((SCORING_TIMEOUT_MS * 2) / 1000);
 const PUBLISH_STAGED_FEED_SCRIPT = `
 local sourceCount = tonumber(ARGV[1])
-if sourceCount == nil or sourceCount <= 0 or #KEYS ~= sourceCount * 2 then
+if sourceCount ~= 24 or #KEYS ~= sourceCount * 2 + 2 then
   return redis.error_reply('invalid staged feed publish arguments')
 end
 for index = 1, sourceCount do
@@ -66,13 +90,95 @@ for index = 1, sourceCount do
     return redis.error_reply('missing staged feed publish key at index ' .. index)
   end
 end
+
+local function appendFramed(parts, value)
+  table.insert(parts, tostring(string.len(value)))
+  table.insert(parts, ':')
+  table.insert(parts, value)
+end
+
+local function scoresMatch(left, right)
+  local scale = math.max(1, math.abs(left), math.abs(right))
+  return math.abs(left - right) <= scale * 0.000000001
+end
+
+local function validateProjection(zsetKey, orderKey, explanationKey, explanationSealKey, metadataStart, sealKey)
+  local metadata = {}
+  for index = metadataStart, metadataStart + 6 do
+    local value = redis.call('GET', KEYS[index])
+    if not value then
+      return false, 'missing metadata at staged key index ' .. index
+    end
+    table.insert(metadata, value)
+  end
+
+  local expectedCount = tonumber(metadata[4])
+  if expectedCount == nil or expectedCount <= 0 then
+    return false, 'invalid staged feed count'
+  end
+  if redis.call('ZCARD', KEYS[zsetKey]) ~= expectedCount or
+     redis.call('LLEN', KEYS[orderKey]) ~= expectedCount or
+     redis.call('HLEN', KEYS[explanationKey]) ~= expectedCount or
+     redis.call('HLEN', KEYS[explanationSealKey]) ~= expectedCount then
+    return false, 'staged feed cardinality disagreement'
+  end
+
+  local parts = {}
+  for _, value in ipairs(metadata) do
+    appendFramed(parts, value)
+  end
+  local orderedUris = redis.call('LRANGE', KEYS[orderKey], 0, -1)
+  local seenUris = {}
+  for index, postUri in ipairs(orderedUris) do
+    if seenUris[postUri] then
+      return false, 'duplicate staged feed URI at position ' .. index
+    end
+    seenUris[postUri] = true
+
+    local explanation = redis.call('HGET', KEYS[explanationKey], postUri)
+    local explanationSeal = redis.call('HGET', KEYS[explanationSealKey], postUri)
+    local redisScore = redis.call('ZSCORE', KEYS[zsetKey], postUri)
+    if not explanation or not explanationSeal or not redisScore then
+      return false, 'missing staged feed row at position ' .. index
+    end
+    local decodedOk, decoded = pcall(cjson.decode, explanation)
+    if not decodedOk or type(decoded) ~= 'table' or decoded.post_uri ~= postUri or
+       decoded.ranked_position ~= index or type(decoded.final_score) ~= 'number' or
+       not scoresMatch(tonumber(redisScore), decoded.final_score) then
+      return false, 'staged feed explanation disagreement at position ' .. index
+    end
+    appendFramed(parts, postUri)
+    appendFramed(parts, explanation)
+    appendFramed(parts, explanationSeal)
+  end
+
+  local expectedSeal = redis.call('GET', KEYS[sealKey])
+  if not expectedSeal or redis.sha1hex(table.concat(parts)) ~= expectedSeal then
+    return false, 'staged feed integrity seal disagreement'
+  end
+  return true, nil
+end
+
+local currentValid, currentError = validateProjection(1, 3, 5, 7, 9, 23)
+if not currentValid then
+  return redis.error_reply(currentError)
+end
+local lastKnownGoodValid, lastKnownGoodError = validateProjection(2, 4, 6, 8, 16, 24)
+if not lastKnownGoodValid then
+  return redis.error_reply(lastKnownGoodError)
+end
+
+redis.call('INCR', KEYS[#KEYS - 1])
 for index = 1, sourceCount do
   local destinationIndex = sourceCount + index
   redis.call('RENAME', KEYS[index], KEYS[destinationIndex])
   redis.call('PERSIST', KEYS[destinationIndex])
 end
+redis.call('DEL', KEYS[#KEYS])
 return 1
 `;
+
+export const __PUBLISH_STAGED_FEED_SCRIPT_FOR_TESTS = PUBLISH_STAGED_FEED_SCRIPT;
 
 type RedisTransactionResult = Array<[Error | null, unknown]>;
 
@@ -177,6 +283,33 @@ interface FeedPublicationResult {
   feedStatsSnapshot: CurrentFeedStatsSnapshot | null;
 }
 
+export interface FeedPublicationDatabaseRow {
+  post_uri: string;
+  total_score: number | string;
+  author_did: string;
+  bridging_score: number | string;
+  engagement_score: number | string;
+  embed_url: string | null;
+  text_length: number | string;
+  created_at: Date | string;
+  scored_at: Date | string;
+  classification_method: string | null;
+  source_score_run_id: string | null;
+  recency_score: number | string;
+  source_diversity_score: number | string;
+  relevance_score: number | string;
+  recency_weight: number | string;
+  engagement_weight: number | string;
+  bridging_weight: number | string;
+  source_diversity_weight: number | string;
+  relevance_weight: number | string;
+  recency_weighted: number | string;
+  engagement_weighted: number | string;
+  bridging_weighted: number | string;
+  source_diversity_weighted: number | string;
+  relevance_weighted: number | string;
+}
+
 interface RedisFeedCandidate {
   post_uri: string;
   total_score: number;
@@ -185,6 +318,11 @@ interface RedisFeedCandidate {
   engagement_score: number;
   embed_url: string | null;
   text_length: number;
+  created_at: string;
+  scored_at: string;
+  classification_method: 'keyword' | 'embedding';
+  source_score_run_id: string;
+  components: PublicFeedScoreComponents;
 }
 
 /**
@@ -253,6 +391,7 @@ async function publishScoringRunWithFence(options: {
   durableRescoreGeneration: number | null;
   requestedFullRescoreGeneration: number;
   currentRunOnly: boolean;
+  expectedWeights: PublicFeedWeights;
 }): Promise<FeedPublicationResult> {
   const client = await db.connect();
 
@@ -294,7 +433,8 @@ async function publishScoringRunWithFence(options: {
     const publication = await writeToRedisFromDb(
       options.epochId,
       options.runId,
-      options.currentRunOnly
+      options.currentRunOnly,
+      options.expectedWeights
     );
     if (
       options.currentRunOnly
@@ -491,6 +631,13 @@ async function runScoringPipelineInternal(): Promise<void> {
       durableRescoreGeneration,
       requestedFullRescoreGeneration,
       currentRunOnly: policyRescoreDue,
+      expectedWeights: {
+        recency: epoch.weights.recency,
+        engagement: epoch.weights.engagement,
+        bridging: epoch.weights.bridging,
+        source_diversity: epoch.weights.sourceDiversity,
+        relevance: epoch.weights.relevance,
+      },
     });
 
     const elapsed = Date.now() - startTime;
@@ -611,9 +758,20 @@ async function updateEpochMetrics(
   );
 }
 
-function numericValue(value: unknown): number {
+function publicationNumericValue(value: unknown, field: string, postUri: string): number {
+  if ((typeof value !== 'number' && typeof value !== 'string') ||
+      (typeof value === 'string' && value.trim().length === 0)) {
+    throw new TypeError(
+      `Feed publication row has invalid ${field} for ${postUri}: ${String(value)}`
+    );
+  }
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isFinite(parsed)) {
+    throw new TypeError(
+      `Feed publication row has non-finite ${field} for ${postUri}: ${String(value)}`
+    );
+  }
+  return parsed;
 }
 
 function average(values: number[]): number {
@@ -1223,7 +1381,8 @@ async function storeScoreComponents(
 async function writeToRedisFromDb(
   epochId: number,
   runId: string,
-  currentRunOnly: boolean
+  currentRunOnly: boolean,
+  expectedWeights: PublicFeedWeights
 ): Promise<FeedPublicationResult> {
   const cutoffMs = config.SCORING_WINDOW_HOURS * 60 * 60 * 1000;
   const cutoff = new Date(Date.now() - cutoffMs);
@@ -1240,25 +1399,29 @@ async function writeToRedisFromDb(
     queryParams.push(runId);
   }
 
-  const result = await db.query<{
-    post_uri: string;
-    total_score: number | string;
-    author_did: string;
-    bridging_score: number | string;
-    engagement_score: number | string;
-    embed_url: string | null;
-    text_length: number | string;
-  }>(
-    `SELECT ps.post_uri, ps.total_score, p.author_did,
+  const result = await db.query<FeedPublicationDatabaseRow>(
+    `WITH eligible_scores AS (
+       SELECT ps.post_uri, ps.total_score, p.author_did,
             ps.bridging_score, ps.engagement_score, p.embed_url,
-            COALESCE(LENGTH(p.text), 0) as text_length
-     FROM post_scores ps
+            COALESCE(LENGTH(p.text), 0) as text_length,
+            p.created_at, ps.scored_at, ps.classification_method,
+            ps.component_details->>'run_id' AS source_score_run_id,
+            ps.recency_score, ps.source_diversity_score, ps.relevance_score,
+            ps.recency_weight, ps.engagement_weight, ps.bridging_weight,
+            ps.source_diversity_weight, ps.relevance_weight,
+            ps.recency_weighted, ps.engagement_weighted, ps.bridging_weighted,
+            ps.source_diversity_weighted, ps.relevance_weighted,
+            ROW_NUMBER() OVER (
+              PARTITION BY ps.post_uri
+              ORDER BY p.created_at DESC, ps.scored_at DESC
+            ) AS uri_row_number
+       FROM post_scores ps
      -- p.created_at = ps.created_at is the partition key (posts is
      -- RANGE-partitioned by created_at); pairing it with the p.created_at
      -- window below lets both posts and post_scores prune to the same handful
      -- of daily partitions instead of scanning all ~36 (PROJ-917).
-     INNER JOIN posts p ON p.uri = ps.post_uri AND p.created_at = ps.created_at
-     WHERE ps.epoch_id = $1
+       INNER JOIN posts p ON p.uri = ps.post_uri AND p.created_at = ps.created_at
+       WHERE ps.epoch_id = $1
        AND p.deleted = FALSE
        AND p.created_at > $3
        AND p.created_at <= NOW()
@@ -1269,21 +1432,80 @@ async function writeToRedisFromDb(
        -- prunes the post_scores scan to the 72h partitions (18.7s -> 2.6s).
        AND ps.created_at > $3
        AND ps.relevance_score >= $4
-       ${currentRunClause}
-     ORDER BY ps.total_score DESC
+       AND NULLIF(BTRIM(ps.component_details->>'run_id'), '') IS NOT NULL
+       AND ps.classification_method IN ('keyword', 'embedding')
+         ${currentRunClause}
+     )
+     SELECT post_uri, total_score, author_did, bridging_score, engagement_score,
+            embed_url, text_length, created_at, scored_at, classification_method,
+            source_score_run_id, recency_score, source_diversity_score, relevance_score,
+            recency_weight, engagement_weight, bridging_weight,
+            source_diversity_weight, relevance_weight,
+            recency_weighted, engagement_weighted, bridging_weighted,
+            source_diversity_weighted, relevance_weighted
+     FROM eligible_scores
+     WHERE uri_row_number = 1
+     ORDER BY total_score DESC, created_at DESC, post_uri COLLATE "C" ASC
      LIMIT $2`,
     queryParams
   );
 
-  const feedCandidates: RedisFeedCandidate[] = result.rows.map((post) => ({
-    post_uri: post.post_uri,
-    total_score: numericValue(post.total_score),
-    author_did: post.author_did,
-    bridging_score: numericValue(post.bridging_score),
-    engagement_score: numericValue(post.engagement_score),
-    embed_url: post.embed_url,
-    text_length: numericValue(post.text_length),
-  }));
+  const feedCandidates: RedisFeedCandidate[] = result.rows.map((post) => {
+    const sourceScoreRunId = post.source_score_run_id;
+    if (typeof sourceScoreRunId !== 'string' || sourceScoreRunId.trim().length === 0) {
+      throw new Error(`Feed publication score row is missing source run ID: ${post.post_uri}`);
+    }
+    if (post.classification_method !== 'keyword' && post.classification_method !== 'embedding') {
+      throw new Error(
+        `Feed publication score row has invalid classification method for ${post.post_uri}: ${String(post.classification_method)}`
+      );
+    }
+    const createdAt = new Date(post.created_at);
+    const scoredAt = new Date(post.scored_at);
+    if (Number.isNaN(createdAt.getTime()) || Number.isNaN(scoredAt.getTime())) {
+      throw new Error(`Feed publication score row has invalid timestamps: ${post.post_uri}`);
+    }
+    return {
+      post_uri: post.post_uri,
+      total_score: publicationNumericValue(post.total_score, 'total_score', post.post_uri),
+      author_did: post.author_did,
+      bridging_score: publicationNumericValue(post.bridging_score, 'bridging_score', post.post_uri),
+      engagement_score: publicationNumericValue(post.engagement_score, 'engagement_score', post.post_uri),
+      embed_url: post.embed_url,
+      text_length: publicationNumericValue(post.text_length, 'text_length', post.post_uri),
+      created_at: createdAt.toISOString(),
+      scored_at: scoredAt.toISOString(),
+      classification_method: post.classification_method,
+      source_score_run_id: sourceScoreRunId,
+      components: {
+        recency: {
+          raw_score: publicationNumericValue(post.recency_score, 'recency_score', post.post_uri),
+          weight: publicationNumericValue(post.recency_weight, 'recency_weight', post.post_uri),
+          weighted: publicationNumericValue(post.recency_weighted, 'recency_weighted', post.post_uri),
+        },
+        engagement: {
+          raw_score: publicationNumericValue(post.engagement_score, 'engagement_score', post.post_uri),
+          weight: publicationNumericValue(post.engagement_weight, 'engagement_weight', post.post_uri),
+          weighted: publicationNumericValue(post.engagement_weighted, 'engagement_weighted', post.post_uri),
+        },
+        bridging: {
+          raw_score: publicationNumericValue(post.bridging_score, 'bridging_score', post.post_uri),
+          weight: publicationNumericValue(post.bridging_weight, 'bridging_weight', post.post_uri),
+          weighted: publicationNumericValue(post.bridging_weighted, 'bridging_weighted', post.post_uri),
+        },
+        source_diversity: {
+          raw_score: publicationNumericValue(post.source_diversity_score, 'source_diversity_score', post.post_uri),
+          weight: publicationNumericValue(post.source_diversity_weight, 'source_diversity_weight', post.post_uri),
+          weighted: publicationNumericValue(post.source_diversity_weighted, 'source_diversity_weighted', post.post_uri),
+        },
+        relevance: {
+          raw_score: publicationNumericValue(post.relevance_score, 'relevance_score', post.post_uri),
+          weight: publicationNumericValue(post.relevance_weight, 'relevance_weight', post.post_uri),
+          weighted: publicationNumericValue(post.relevance_weighted, 'relevance_weighted', post.post_uri),
+        },
+      },
+    };
+  });
 
   const publication = applyFeedUrlDedup(
     feedCandidates.map((post) => ({
@@ -1292,6 +1514,7 @@ async function writeToRedisFromDb(
       embedUrl: post.embed_url,
       textLength: post.text_length,
       value: post,
+      createdAt: post.created_at,
     })),
     {
       enabled: config.FEED_DEDUP_ENABLED,
@@ -1321,23 +1544,118 @@ async function writeToRedisFromDb(
 
   const stagedCurrentKey = `${FEED_STAGED_CURRENT_PREFIX}${runId}`;
   const stagedLastKnownGoodKey = `${FEED_STAGED_LAST_KNOWN_GOOD_PREFIX}${runId}`;
+  const stagedCurrentExplanationsKey = `${FEED_STAGED_EXPLANATIONS_CURRENT_PREFIX}${runId}`;
+  const stagedLastKnownGoodExplanationsKey = `${FEED_STAGED_EXPLANATIONS_LAST_KNOWN_GOOD_PREFIX}${runId}`;
+  const stagedCurrentExplanationSealsKey = `${FEED_STAGED_EXPLANATION_SEALS_CURRENT_PREFIX}${runId}`;
+  const stagedLastKnownGoodExplanationSealsKey = `${FEED_STAGED_EXPLANATION_SEALS_LAST_KNOWN_GOOD_PREFIX}${runId}`;
+  const stagedCurrentOrderKey = `${FEED_STAGED_ORDER_CURRENT_PREFIX}${runId}`;
+  const stagedLastKnownGoodOrderKey = `${FEED_STAGED_ORDER_LAST_KNOWN_GOOD_PREFIX}${runId}`;
   const updatedAt = new Date().toISOString();
+  const activeWeights: PublicFeedWeights = { ...expectedWeights };
+  const explanationCandidates: FeedPublicationExplanationCandidate[] = publication.entries.map(
+    (entry) => ({
+      postUri: entry.value.post_uri,
+      preAdjustmentPosition: entry.preAdjustmentPosition,
+      baseScore: entry.baseScore,
+      publicationAdjustment: entry.publicationAdjustment,
+      finalScore: entry.score,
+      sourceScoreRunId: entry.value.source_score_run_id,
+      scoredAt: entry.value.scored_at,
+      classificationMethod: entry.value.classification_method,
+      components: entry.value.components,
+      createdAt: entry.value.created_at,
+    })
+  );
+  const explanationArtifact = buildFeedPublicationArtifact(
+    {
+      epochId,
+      publicationRunId: runId,
+      publishedAt: updatedAt,
+      weights: activeWeights,
+      dedupedUrlCount: publication.dedupedUrlCount,
+      totalUrlCount: publication.totalUrlCount,
+    },
+    explanationCandidates
+  );
+  const explanationDigest = digestFeedPublicationArtifact(explanationArtifact);
+  const serializedWeights = JSON.stringify(activeWeights);
+  const currentKeys = CURRENT_FEED_PUBLICATION_KEYS;
+  const lastKnownGoodKeys = LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS;
+  const currentMetadataEntries: ReadonlyArray<readonly [string, string]> = [
+    [currentKeys.metadata.epoch, epochId.toString()],
+    [currentKeys.metadata.publicationRunId, runId],
+    [currentKeys.metadata.publishedAt, updatedAt],
+    [currentKeys.metadata.totalPublishedItems, topPosts.length.toString()],
+    [currentKeys.metadata.schemaVersion, '1'],
+    [currentKeys.metadata.digest, explanationDigest],
+    [currentKeys.metadata.weights, serializedWeights],
+  ];
+  const lastKnownGoodMetadataEntries: ReadonlyArray<readonly [string, string]> = [
+    [lastKnownGoodKeys.metadata.epoch, epochId.toString()],
+    [lastKnownGoodKeys.metadata.publicationRunId, runId],
+    [lastKnownGoodKeys.metadata.publishedAt, updatedAt],
+    [lastKnownGoodKeys.metadata.totalPublishedItems, topPosts.length.toString()],
+    [lastKnownGoodKeys.metadata.schemaVersion, '1'],
+    [lastKnownGoodKeys.metadata.digest, explanationDigest],
+    [lastKnownGoodKeys.metadata.weights, serializedWeights],
+  ];
+  const serializedExplanations = explanationArtifact.entries.map((explanation) => ({
+    postUri: explanation.post_uri,
+    serializedExplanation: JSON.stringify(explanation),
+  }));
+  const currentSealedExplanations = serializedExplanations.map((explanation) => ({
+    ...explanation,
+    explanationSeal: sealFeedPublicationExplanation(
+      currentMetadataEntries.map(([, value]) => value),
+      explanation.postUri,
+      explanation.serializedExplanation
+    ),
+  }));
+  const lastKnownGoodSealedExplanations = serializedExplanations.map((explanation) => ({
+    ...explanation,
+    explanationSeal: sealFeedPublicationExplanation(
+      lastKnownGoodMetadataEntries.map(([, value]) => value),
+      explanation.postUri,
+      explanation.serializedExplanation
+    ),
+  }));
+  const currentStorageSeal = sealFeedPublicationStorage({
+    metadataValues: currentMetadataEntries.map(([, value]) => value),
+    entries: currentSealedExplanations,
+  });
+  const lastKnownGoodStorageSeal = sealFeedPublicationStorage({
+    metadataValues: lastKnownGoodMetadataEntries.map(([, value]) => value),
+    entries: lastKnownGoodSealedExplanations,
+  });
   const metadataEntries: ReadonlyArray<readonly [string, string]> = [
-    ['feed:epoch', epochId.toString()],
-    ['feed:run_id', runId],
-    ['feed:updated_at', updatedAt],
-    ['feed:count', topPosts.length.toString()],
-    ['feed:last_known_good_epoch', epochId.toString()],
-    ['feed:last_known_good_run_id', runId],
-    ['feed:last_known_good_count', topPosts.length.toString()],
+    ...currentMetadataEntries,
+    ...lastKnownGoodMetadataEntries,
+    [currentKeys.publicationIntegritySeal, currentStorageSeal],
+    [lastKnownGoodKeys.publicationIntegritySeal, lastKnownGoodStorageSeal],
   ];
   const stagedMetadataKeys = metadataEntries.map(
     (_entry, index) => `${FEED_STAGED_METADATA_PREFIX}${runId}:${index}`
   );
-  const stagedKeys = [stagedCurrentKey, stagedLastKnownGoodKey, ...stagedMetadataKeys];
+  const stagedKeys = [
+    stagedCurrentKey,
+    stagedLastKnownGoodKey,
+    stagedCurrentOrderKey,
+    stagedLastKnownGoodOrderKey,
+    stagedCurrentExplanationsKey,
+    stagedLastKnownGoodExplanationsKey,
+    stagedCurrentExplanationSealsKey,
+    stagedLastKnownGoodExplanationSealsKey,
+    ...stagedMetadataKeys,
+  ];
   const publishDestinationKeys = [
     FEED_CURRENT_KEY,
     FEED_LAST_KNOWN_GOOD_KEY,
+    currentKeys.order,
+    lastKnownGoodKeys.order,
+    currentKeys.explanations,
+    lastKnownGoodKeys.explanations,
+    currentKeys.explanationSeals,
+    lastKnownGoodKeys.explanationSeals,
     ...metadataEntries.map(([destinationKey]) => destinationKey),
   ];
 
@@ -1350,6 +1668,30 @@ async function writeToRedisFromDb(
     }
     stagingTransaction.zadd(stagedCurrentKey, ...zaddArguments);
     stagingTransaction.zadd(stagedLastKnownGoodKey, ...zaddArguments);
+    const orderedPostUris = explanationArtifact.entries.map((entry) => entry.post_uri);
+    stagingTransaction.rpush(stagedCurrentOrderKey, ...orderedPostUris);
+    stagingTransaction.rpush(stagedLastKnownGoodOrderKey, ...orderedPostUris);
+    const explanationHashArguments: string[] = [];
+    const currentExplanationSealHashArguments: string[] = [];
+    const lastKnownGoodExplanationSealHashArguments: string[] = [];
+    for (const [index, explanation] of serializedExplanations.entries()) {
+      explanationHashArguments.push(explanation.postUri, explanation.serializedExplanation);
+      currentExplanationSealHashArguments.push(
+        explanation.postUri,
+        currentSealedExplanations[index].explanationSeal
+      );
+      lastKnownGoodExplanationSealHashArguments.push(
+        explanation.postUri,
+        lastKnownGoodSealedExplanations[index].explanationSeal
+      );
+    }
+    stagingTransaction.hset(stagedCurrentExplanationsKey, ...explanationHashArguments);
+    stagingTransaction.hset(stagedLastKnownGoodExplanationsKey, ...explanationHashArguments);
+    stagingTransaction.hset(stagedCurrentExplanationSealsKey, ...currentExplanationSealHashArguments);
+    stagingTransaction.hset(
+      stagedLastKnownGoodExplanationSealsKey,
+      ...lastKnownGoodExplanationSealHashArguments
+    );
     for (const [index, [, value]] of metadataEntries.entries()) {
       stagingTransaction.set(stagedMetadataKeys[index], value);
     }
@@ -1363,9 +1705,11 @@ async function writeToRedisFromDb(
 
     const published = await redis.eval(
       PUBLISH_STAGED_FEED_SCRIPT,
-      stagedKeys.length + publishDestinationKeys.length,
+      stagedKeys.length + publishDestinationKeys.length + 2,
       ...stagedKeys,
       ...publishDestinationKeys,
+      CURRENT_FEED_GENERATION_KEY,
+      CURRENT_FEED_SNAPSHOT_KEY,
       stagedKeys.length.toString()
     );
     if (published !== 1) {
@@ -1376,11 +1720,7 @@ async function writeToRedisFromDb(
     throw error;
   }
 
-  try {
-    await invalidateCurrentFeedSnapshot();
-  } catch (err) {
-    logger.warn({ err, epochId, runId }, 'Failed to invalidate current feed snapshot cache after feed write');
-  }
+  clearCurrentFeedSnapshotMemoryCache();
 
   logger.info({ postCount: topPosts.length, epochId }, 'Feed written to Redis');
   return { published: true, feedStatsSnapshot };

@@ -67,6 +67,7 @@ export async function createServer(options?: CreateServerOptions) {
   // Sync functions that return a boolean are silently ignored, causing requests to hang.
   await app.register(cors, {
     credentials: true,
+    exposedHeaders: ['ETag'],
     origin: async (origin: string | undefined) => {
       if (!origin) return true;
       return allowedOrigins.has(origin);

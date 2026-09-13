@@ -177,6 +177,173 @@ describe('feed snapshot cache', () => {
     );
   });
 
+  it('uses a coherent list/zset/count read and falls back to coherent last-known-good order', async () => {
+    const fallbackUris = ['at://did:plc:test/app.bsky.feed.post/fallback'];
+    Object.defineProperty(redisMock, 'lrange', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    redisMock.get.mockResolvedValue(null);
+    redisMock.eval.mockImplementation((script: string, _keyCount: number, ...args: unknown[]) => {
+      if (script.includes("redis.call('ZCARD'")) {
+        if (args[0] === __snapshotCacheKeysForTests.currentFeedKey) {
+          return Promise.resolve(JSON.stringify({ unavailable: true }));
+        }
+        if (args[0] === __snapshotCacheKeysForTests.lastKnownGoodFeedKey) {
+          return Promise.resolve(JSON.stringify({ uris: fallbackUris }));
+        }
+        throw new Error(`Unexpected coherent feed key: ${String(args[0])}`);
+      }
+      if (script.includes('SETEX')) {
+        return Promise.resolve(1);
+      }
+      throw new Error('Unexpected Redis script');
+    });
+
+    try {
+      const snapshot = await getCurrentFeedSnapshot();
+
+      expect(snapshot?.uris).toEqual(fallbackUris);
+      expect(redisMock.eval).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining("redis.call('ZCARD'"),
+        3,
+        __snapshotCacheKeysForTests.currentFeedKey,
+        __snapshotCacheKeysForTests.currentOrderKey,
+        __snapshotCacheKeysForTests.currentCountKey,
+        config.FEED_MAX_POSTS.toString()
+      );
+      expect(redisMock.eval).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining("redis.call('ZCARD'"),
+        3,
+        __snapshotCacheKeysForTests.lastKnownGoodFeedKey,
+        __snapshotCacheKeysForTests.lastKnownGoodOrderKey,
+        __snapshotCacheKeysForTests.lastKnownGoodCountKey,
+        config.FEED_MAX_POSTS.toString()
+      );
+      expect(redisMock.incr).toHaveBeenCalledWith(
+        __snapshotCacheKeysForTests.lastKnownGoodFallbackTotalKey
+      );
+    } finally {
+      delete (redisMock as Record<string, unknown>).lrange;
+    }
+  });
+
+  it('uses the legacy zset order only when the publication order list is absent during rollout', async () => {
+    const legacyUris = ['at://did:plc:test/app.bsky.feed.post/pre-rollout'];
+    Object.defineProperty(redisMock, 'lrange', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    redisMock.get.mockResolvedValue(null);
+    redisMock.eval.mockImplementation((script: string) => {
+      if (script.includes("redis.call('ZCARD'")) {
+        return Promise.resolve(JSON.stringify({ uris: legacyUris, legacy: true }));
+      }
+      if (script.includes('SETEX')) {
+        return Promise.resolve(1);
+      }
+      throw new Error('Unexpected Redis script');
+    });
+
+    try {
+      const snapshot = await getCurrentFeedSnapshot();
+
+      expect(snapshot?.uris).toEqual(legacyUris);
+      expect(redisMock.eval).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        3,
+        __snapshotCacheKeysForTests.currentFeedKey,
+        __snapshotCacheKeysForTests.currentOrderKey,
+        __snapshotCacheKeysForTests.currentCountKey,
+        config.FEED_MAX_POSTS.toString()
+      );
+    } finally {
+      delete (redisMock as Record<string, unknown>).lrange;
+    }
+  });
+
+  it('serves the legacy zset while rollout order and count artifacts are both absent', async () => {
+    const legacyUris = ['at://did:plc:test/app.bsky.feed.post/pre-rollout'];
+    Object.defineProperty(redisMock, 'lrange', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    redisMock.get.mockResolvedValue(null);
+    redisMock.eval.mockImplementation((script: string) => {
+      if (script.includes("redis.call('EXISTS', KEYS[2])")) {
+        expect(script.indexOf("redis.call('EXISTS', KEYS[2])")).toBeLessThan(
+          script.indexOf("redis.call('GET', KEYS[3])")
+        );
+        return Promise.resolve(JSON.stringify({ uris: legacyUris, legacy: true }));
+      }
+      if (script.includes('SETEX')) {
+        return Promise.resolve(1);
+      }
+      throw new Error('Unexpected Redis script');
+    });
+
+    try {
+      await expect(getCurrentFeedSnapshot()).resolves.toMatchObject({ uris: legacyUris });
+      expect(redisMock.eval).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        3,
+        __snapshotCacheKeysForTests.currentFeedKey,
+        __snapshotCacheKeysForTests.currentOrderKey,
+        __snapshotCacheKeysForTests.currentCountKey,
+        config.FEED_MAX_POSTS.toString()
+      );
+    } finally {
+      delete (redisMock as Record<string, unknown>).lrange;
+    }
+  });
+
+  it('falls back when the rollout-era current zset and order artifacts are empty', async () => {
+    const fallbackUris = ['at://did:plc:test/app.bsky.feed.post/fallback'];
+    Object.defineProperty(redisMock, 'lrange', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    redisMock.get.mockResolvedValue(null);
+    redisMock.eval.mockImplementation((script: string, _keyCount: number, sortedSetKey: string) => {
+      if (script.includes("redis.call('EXISTS', KEYS[2])")) {
+        return Promise.resolve(JSON.stringify({
+          uris: sortedSetKey === __snapshotCacheKeysForTests.currentFeedKey ? [] : fallbackUris,
+          legacy: true,
+        }));
+      }
+      if (script.includes('SETEX')) {
+        return Promise.resolve(1);
+      }
+      throw new Error('Unexpected Redis script');
+    });
+
+    try {
+      await expect(getCurrentFeedSnapshot()).resolves.toMatchObject({ uris: fallbackUris });
+    } finally {
+      delete (redisMock as Record<string, unknown>).lrange;
+    }
+  });
+
+  it('returns null when both rollout-era legacy zsets and order artifacts are empty', async () => {
+    Object.defineProperty(redisMock, 'lrange', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    redisMock.get.mockResolvedValue(null);
+    redisMock.eval.mockResolvedValue(JSON.stringify({ uris: [], legacy: true }));
+
+    try {
+      await expect(getCurrentFeedSnapshot()).resolves.toBeNull();
+      expect(redisMock.eval).toHaveBeenCalledTimes(2);
+    } finally {
+      delete (redisMock as Record<string, unknown>).lrange;
+    }
+  });
+
   it('serves last-known-good without waiting for fallback metric recording', async () => {
     const fallbackUris = ['at://did:plc:test/app.bsky.feed.post/fallback'];
     redisMock.get.mockResolvedValue(null);

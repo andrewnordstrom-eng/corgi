@@ -69,6 +69,7 @@ vi.mock('../src/admin/status-tracker.js', () => ({
 }));
 
 import { runScoringPipeline, __resetPipelineState } from '../src/scoring/pipeline.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 
 function makeEpochRow() {
   return {
@@ -118,6 +119,8 @@ describe('relevance floor in feed output', () => {
       del: pipelineDelMock.mockReturnThis(),
       expire: vi.fn().mockReturnThis(),
       zadd: pipelineZaddMock.mockReturnThis(),
+      rpush: vi.fn().mockReturnThis(),
+      hset: vi.fn().mockReturnThis(),
       set: pipelineSetMock.mockReturnThis(),
       exec: pipelineExecMock.mockResolvedValue([]),
     };
@@ -202,7 +205,7 @@ describe('relevance floor in feed output', () => {
 
   it('includes posts returned by DB query in Redis feed', async () => {
     const feedPosts = [
-      { post_uri: 'at://did:plc:test/post/high', total_score: 0.85 },
+      buildFeedPublicationRow({ post_uri: 'at://did:plc:test/post/high', total_score: 0.85 }),
     ];
 
     // No posts to score, but writeToRedisFromDb returns 1 post
@@ -227,8 +230,8 @@ describe('relevance floor in feed output', () => {
 
   it('writes correct metadata count for multiple posts', async () => {
     const feedPosts = [
-      { post_uri: 'at://post/1', total_score: 0.9 },
-      { post_uri: 'at://post/2', total_score: 0.7 },
+      buildFeedPublicationRow({ post_uri: 'at://post/1', total_score: 0.9 }),
+      buildFeedPublicationRow({ post_uri: 'at://post/2', total_score: 0.7 }),
     ];
 
     dbQueryMock

@@ -17,6 +17,12 @@ import {
   countPostsWithComponentAbove,
   readPostScore,
 } from '../../scoring/score-reader.js';
+import {
+  isPublishedSnapshotIntegrityFailure,
+  PUBLIC_SNAPSHOT_DEPTH,
+  readPublishedPostSnapshotReceipt,
+} from '../feed-snapshot-store.js';
+import type { PublishedPostSnapshotReceipt } from '../feed-snapshot-store.js';
 import type { PostExplanation, TopicBreakdownEntry } from '../transparency.types.js';
 
 export function registerPostExplainRoute(app: FastifyInstance): void {
@@ -28,7 +34,8 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
         summary: 'Explain post ranking',
         description:
           'Returns a full breakdown of why a post is ranked where it is: all 5 component scores (raw, weight, weighted), ' +
-          'current rank, and a counterfactual showing what rank it would have with pure engagement sorting.',
+          'an exact published position when the post is in the current materialized snapshot, or a legacy score-run rank otherwise, ' +
+          'and a counterfactual showing what rank it would have with pure engagement sorting.',
         params: {
           type: 'object',
           properties: {
@@ -45,6 +52,13 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
               epoch_description: { type: 'string', nullable: true },
               total_score: { type: 'number' },
               rank: { type: 'integer' },
+              rank_scope: { type: 'string', enum: ['published_snapshot', 'score_run'] },
+              published_position: {
+                type: 'integer',
+                nullable: true,
+                description: 'Position in the published top-50 transparency presentation snapshot.',
+              },
+              publication_snapshot_id: { type: 'string', nullable: true },
               components: {
                 type: 'object',
                 description: 'All 5 scoring components with raw, weight, and weighted values',
@@ -85,10 +99,15 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
               scored_at: { type: 'string', format: 'date-time' },
               classification_method: { type: 'string', enum: ['keyword', 'embedding'] },
             },
-            required: ['post_uri', 'epoch_id', 'total_score', 'rank', 'components'],
+            required: ['post_uri', 'epoch_id', 'total_score', 'rank', 'rank_scope', 'published_position', 'publication_snapshot_id', 'components'],
           },
           400: ErrorResponseSchema,
           404: ErrorResponseSchema,
+          503: {
+            ...ErrorResponseSchema,
+            description:
+              'TransparencySnapshotIntegrityFailure when a published receipt artifact fails validation.',
+          },
           500: ErrorResponseSchema,
         },
       },
@@ -107,6 +126,54 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
       }
 
       try {
+        let publishedReceipt: PublishedPostSnapshotReceipt | null = null;
+        try {
+          publishedReceipt = await readPublishedPostSnapshotReceipt(
+            decodedUri,
+            PUBLIC_SNAPSHOT_DEPTH
+          );
+        } catch (snapshotError) {
+          const isIntegrityFailure = isPublishedSnapshotIntegrityFailure(snapshotError);
+          if (isIntegrityFailure) {
+            logger.error(
+              { err: snapshotError, uri: decodedUri },
+              'Published snapshot receipt failed integrity validation'
+            );
+            return reply.code(503).send({
+              error: 'TransparencySnapshotIntegrityFailure',
+              message: 'The published explanation snapshot failed integrity validation.',
+            });
+          }
+          logger.warn(
+            { err: snapshotError, uri: decodedUri },
+            'Published snapshot receipt lookup failed; using score-run explanation path'
+          );
+        }
+        if (publishedReceipt !== null) {
+          const { explanation: item } = publishedReceipt;
+          const explanation: PostExplanation = {
+            post_uri: item.post_uri,
+            epoch_id: item.epoch_id,
+            epoch_description: null,
+            total_score: item.final_score,
+            rank: publishedReceipt.publishedPosition,
+            rank_scope: 'published_snapshot',
+            published_position: publishedReceipt.publishedPosition,
+            publication_snapshot_id: publishedReceipt.presentationSnapshotId,
+            components: item.components,
+            governance_weights: publishedReceipt.activeWeights,
+            counterfactual: {
+              pure_engagement_rank: item.engagement_only_position,
+              community_governed_rank: item.ranked_position,
+              difference: item.engagement_only_position - item.ranked_position,
+            },
+            scored_at: item.scored_at,
+            component_details: null,
+            classification_method: item.classification_method,
+          };
+          return reply.send(explanation);
+        }
+
         const epochResult = await db.query<{ id: number; description: string | null }>(
           `SELECT id, description
            FROM governance_epochs
@@ -204,6 +271,9 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
           epoch_description: epochDescription,
           total_score: record.totalScore,
           rank,
+          rank_scope: 'score_run',
+          published_position: null,
+          publication_snapshot_id: null,
           components: componentsResponse,
           governance_weights: governanceWeightsResponse as PostExplanation['governance_weights'],
           counterfactual: {
