@@ -18,6 +18,7 @@ const RUNTIME_DRIFT_CASES: Array<[string, SourceMutation]> = [
   ['SDK engine', (files) => files.set('packages/feed-sdk/package.json', files.get('packages/feed-sdk/package.json')!.replace('>=22.23.2', '>=20.19.0'))],
   ['workflow pin', (files) => files.set('.github/workflows/examples-build.yml', files.get('.github/workflows/examples-build.yml')!.replace('22.23.2', '22'))],
   ['Docker workspace manifest', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replace('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', ''))],
+  ['Docker workspace manifest wildcard lookalike', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replaceAll('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', 'COPY packages/feed-sdk/packageXjson x/packages/feed-sdk/packageXjson'))],
   ['Docker source revision', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replace('ARG SOURCE_REVISION', ''))],
 ];
 

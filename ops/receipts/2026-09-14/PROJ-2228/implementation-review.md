@@ -1,7 +1,8 @@
 # PROJ-2228 implementation review
 
-Status: implementation committed and local verification complete; PR, hosted
-checks, and final commit-bound rollback acceptance are pending.
+Status: published as PR #415; local retained-image rollback passed. CodeQL
+findings from the first hosted head were fixed and locally revalidated; hosted
+checks and review on the corrected head remain pending.
 This packet is not Done and is not a production release approval.
 
 ## Decision-changing findings
@@ -73,7 +74,7 @@ it was corrected through the supported explicit-worktree admission command.
 
 | Check | Result |
 | --- | --- |
-| Full `npm run verify` | Exit 0; 160 test files, 2,271 passed, 1 skipped; builds, legacy-web lint, and frontend static export pass |
+| Full `npm run verify` | Exit 0; 160 test files, 2,272 passed, 1 skipped; builds, legacy-web lint, and frontend static export pass |
 | Four clean `npm ci --ignore-scripts` installs | 4/4 exit 0; zero EBADENGINE |
 | Four canonical moderate-threshold audits | 4/4 exit 0 |
 | Main-lock Node 20 negative control | Exit 1; EBADENGINE on @atproto/api requiring Node >=22 |
@@ -116,7 +117,13 @@ Its stamp, OCI label, native modules, UID, ABI, 34 migrations and HTTP 200 readi
 passed; see `committed-b-acceptance.json`. Earlier image receipts retain their
 provisional base-SHA stamps and are historical evidence only. The first migration
 attempt hit the disposable PostgreSQL initialization race; verifying TCP readiness
-before rerunning resolved it. The retained-artifact rollback rehearsal is pending.
+before rerunning resolved it. The retained-artifact rollback rehearsal passed for exact commits `e4ff4bb` to
+`c880755`: candidate-only network loss produced HTTP 500; retained B restored
+HTTP 200 and its original revision in 2.816 seconds. See `rollback-committed.json`
+and the pre-execution `rollback-expectations.md`. The application/schema were
+unchanged between these revisions; this does not qualify changed-schema rollback.
+The CodeQL correction changes the validation helper only; its next committed
+image still requires separate exact-head validation.
 
 The isolated application deliberately has no live Jetstream feed; `/health`
 reports degraded while dependency-only `/health/ready` returns 200. No production
@@ -124,8 +131,10 @@ readiness, live feed parity, protected-host rollback, or deployment is inferred.
 
 ### Automation Summary
 
-CodeRabbit review and corrections are complete. Next: commit; rebuild and verify the exact committed image; rehearse retained
-artifact rollback; publish the draft PR; clear exact-head hosted CI and review;
+Local CodeRabbit corrections and rollback are complete. Two introduced CodeQL
+findings were then corrected by replacing dynamic regular expressions with literal
+instruction comparisons; full verify and 388 independent focused tests pass.
+Next: rebuild the corrected committed image and clear exact-head hosted CI/review;
 update Linear with the remaining protected-release gate. Keep the existing
 PROJ-2087 owner informed of the Node patch and glibc image delta. Merge, deployment,
 credentials and freeze changes remain excluded by the user's instruction.

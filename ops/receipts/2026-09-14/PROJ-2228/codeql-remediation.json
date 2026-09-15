@@ -1,0 +1,22 @@
+{
+  "prior_head": "e4ff4bbdf04e07bd23956752ce08d61f99c4daa4",
+  "alerts": [
+    85,
+    86
+  ],
+  "finding": "js/useless-regexp-character-escape",
+  "introduced_by_packet": true,
+  "fix": "Compare exact trimmed Docker COPY instructions per stage instead of constructing regular expressions",
+  "full_verify": {
+    "exit_code": 0,
+    "files": 160,
+    "passed": 2272,
+    "skipped": 1,
+    "sha256": "7619f5ba3122a913f2222b8ab1aa98e66af5c9d521b135c1199106112bf8e5b9"
+  },
+  "focused_independent_qa": {
+    "passed": 388,
+    "report": "codeql-fix-qa.md"
+  },
+  "hosted_resolution": "pending next-head CodeQL execution"
+}

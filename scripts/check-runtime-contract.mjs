@@ -156,17 +156,18 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
     'Dockerfile builder stage must validate SOURCE_REVISION as a full lowercase SHA',
   );
   requireExact((dockerfile.match(/COPY \.npmrc \.\//g) ?? []).length === 2, 'Dockerfile must carry engine-strict config into both stages');
+  const productionStage = dockerfile.slice(productionStageStart < 0 ? 0 : productionStageStart);
   for (const relativePath of WORKSPACE_MANIFESTS) {
-    requireExact(
-      (builderStage.match(new RegExp(`COPY ${relativePath.replace('/', '\\/')} \.\/${relativePath.replace('/', '\\/')}`, 'g')) ?? []).length === 1,
-      `Dockerfile builder stage must provide workspace manifest ${relativePath} before npm ci`,
-    );
-    const productionStage = dockerfile.slice(productionStageStart < 0 ? 0 : productionStageStart);
-    requireExact(
-      (productionStage.match(new RegExp(`COPY ${relativePath.replace('/', '\\/')} \.\/${relativePath.replace('/', '\\/')}`, 'g')) ?? []).length === 1,
-      `Dockerfile production stage must provide workspace manifest ${relativePath} before npm ci`,
-    );
+    const instruction = `COPY ${relativePath} ./${relativePath}`;
+    for (const [stageName, stageSource] of [['builder', builderStage], ['production', productionStage]]) {
+      const matchingLines = stageSource.split('\n').filter((line) => line.trim() === instruction);
+      requireExact(
+        matchingLines.length === 1,
+        `Dockerfile ${stageName} stage must provide workspace manifest ${relativePath} before npm ci`,
+      );
+    }
   }
+
   requireExact(
     (dockerfile.match(/npm ci[^\n]*--ignore-scripts/g) ?? []).length === 2 &&
       dockerfile.includes('npm ci --omit=dev --ignore-scripts'),
