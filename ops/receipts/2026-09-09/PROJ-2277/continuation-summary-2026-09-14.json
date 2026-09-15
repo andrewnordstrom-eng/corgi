@@ -130,7 +130,7 @@
   },
   "qa": {
     "command": [
-      "/Users/andrewnordstrom/.nvm/versions/node/v20.19.0/bin/node",
+      "node",
       "node_modules/vitest/vitest.mjs",
       "run",
       "tests/audit-allowlist-script.test.ts",
@@ -150,7 +150,8 @@
     "passScope": "Canonical audit wrapper and deployment/CI audit policy regression coverage, including bounded job ordering, job-level bypass rejection, and literal-false continue-on-error coverage.",
     "limitations": [
       "No production deployment, merge, credentials, or active advisory exception approval."
-    ]
+    ],
+    "command_normalization": "Executable recorded as node for portability; runtime.node records the exact version used. Log and source hashes remain unchanged."
   },
   "dependency_identity": [
     {
