@@ -524,6 +524,10 @@ See `docs/OPERABILITY.md`, `docs/runbooks/operator-quickstart.md`, and
     reference. Keep `.coderabbit.yaml` `reviews.auto_review.auto_incremental_review`
     enabled so the freshness gate receives a fresh non-skipped CodeRabbit signal
     on the latest push.
+    `quality-gate` is also local: its pinned public upstream exposes no runtime
+    inputs, so Corgi must enforce its own Node/npm pins before installation.
+    Preserve the original root clean install, Python syntax check, read-only
+    permissions, and `quality-gate / quality-gate` check name when updating it.
 
 ---
 

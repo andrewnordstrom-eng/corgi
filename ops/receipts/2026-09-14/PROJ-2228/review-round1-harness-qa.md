@@ -25,7 +25,7 @@ A temporary in-memory mocked invocation of `main()` induced a primary candidate-
 
 ## Verdict
 
-PASS for the bounded controlled harness expectations. The implementation’s `main()` also preserves primary failure and makes recovery failure nonzero under the probe. This is local mocked evidence only; parent’s real Docker rehearsal remains required for retained-image identity/readiness/native/migration and production-controller rollback claims.
+PARTIAL for the written controlled harness expectations. The six recorded tests passed, but readiness-timeout and network-disconnect failure fixtures were missing; the earlier PASS wording overstated matrix completion. Corrected during review round 2 on 2026-09-15. Historical commands, counts, and hashes above remain unchanged. The implementation’s `main()` also preserves primary failure and makes recovery failure nonzero under the probe. This is local mocked evidence only; parent’s real Docker rehearsal remains required for retained-image identity/readiness/native/migration and production-controller rollback claims.
 
 ## Runtime Health Check
 

@@ -55,6 +55,13 @@ class DockerCommandError(RuntimeError):
     pass
 
 
+ABSENT = "ABSENT"
+PRESENT = "PRESENT"
+AMBIGUOUS = "AMBIGUOUS"
+OWNED = "OWNED"
+FOREIGN = "FOREIGN"
+
+
 def safe_operation(arguments: list[str]) -> str:
     sanitized: list[str] = []
     redact_next = False
@@ -110,28 +117,28 @@ def inspect_container(name: str) -> dict[str, Any]:
     return value
 
 
-def assert_candidate_name_absent() -> None:
+def candidate_name_state() -> str:
     result = docker(
         ["ps", "-a", "--filter", f"name=^{A_NAME}$", "--format", "{{.ID}}"],
-        True,
+        False,
     )
-    if result.stdout.strip():
+    if result.returncode != 0:
+        return AMBIGUOUS
+    identities = [line for line in result.stdout.splitlines() if line.strip()]
+    if not identities:
+        return ABSENT
+    if len(identities) == 1:
+        return PRESENT
+    return AMBIGUOUS
+
+
+def assert_candidate_name_absent() -> None:
+    if candidate_name_state() != ABSENT:
         raise RuntimeError(f"Candidate container name already exists: {A_NAME}")
 
 
-def run_candidate(run_arguments: list[str], expected_image_id: str) -> str:
-    try:
-        return docker(run_arguments, True).stdout.strip()
-    except Exception as run_error:
-        try:
-            ambiguous_candidate = inspect_container(A_NAME)
-        except Exception as inspect_error:
-            raise run_error from inspect_error
-        if ambiguous_candidate.get("Image") != expected_image_id:
-            raise RuntimeError(
-                "Candidate run failed and the named container is not the expected immutable image"
-            ) from run_error
-        raise run_error
+def run_candidate(run_arguments: list[str]) -> str:
+    return docker(run_arguments, True).stdout.strip()
 
 
 def exec_text(name: str, arguments: list[str]) -> str:
@@ -238,19 +245,22 @@ def network_members() -> dict[str, str]:
 
 
 def recover(
-    candidate_running: bool,
+    candidate_state: str,
     candidate_stop_confirmed: bool,
     known_good_stopped: bool,
     expected_image_id: str,
+    expected_container_id: str,
 ) -> tuple[bool, list[str]]:
     recovery_errors: list[str] = []
-    if candidate_running and not candidate_stop_confirmed:
+    if candidate_state not in (ABSENT, OWNED):
+        recovery_errors.append(f"candidate ownership is {candidate_state}; cleanup withheld")
+    elif candidate_state == OWNED and not candidate_stop_confirmed:
         try:
             candidate = inspect_container(A_NAME)
         except Exception as error:
             recovery_errors.append(f"candidate identity unavailable; cleanup withheld: {type(error).__name__}: {error}")
         else:
-            if candidate.get("Image") != expected_image_id:
+            if candidate.get("Image") != expected_image_id or candidate.get("Id") != expected_container_id:
                 recovery_errors.append("candidate identity mismatch; cleanup withheld")
             else:
                 try:
@@ -263,7 +273,9 @@ def recover(
                     else:
                         recovery_errors.append("stop candidate recovery failed: docker stop returned nonzero")
     if known_good_stopped:
-        if not candidate_stop_confirmed:
+        if candidate_state not in (ABSENT, OWNED):
+            recovery_errors.append("known-good restore withheld because candidate ownership was not confirmed")
+        elif candidate_state == OWNED and not candidate_stop_confirmed:
             recovery_errors.append("known-good restore withheld because candidate stop was not confirmed")
         else:
             try:
@@ -285,7 +297,8 @@ def main() -> int:
         "terminal": "unresolved",
     }
     b_stopped = False
-    a_started = False
+    candidate_state = ABSENT
+    candidate_container_id = ""
     a_stop_confirmed = False
     exit_code = 0
     try:
@@ -319,18 +332,44 @@ def main() -> int:
         assert_candidate_name_absent()
         docker(["stop", B_NAME], True)
         b_stopped = True
-        a_started = True
         run_arguments = ["run", "-d", "--name", A_NAME, "--network", NETWORK]
         for key, value in SETTINGS.items():
             run_arguments.extend(["--env", f"{key}={value}"])
         run_arguments.append(a_image_id)
-        a_container_id = run_candidate(run_arguments, a_image_id)
+        try:
+            a_container_id = run_candidate(run_arguments)
+            candidate_container_id = a_container_id
+            candidate_state = OWNED
+        except Exception as run_error:
+            try:
+                presence = candidate_name_state()
+            except Exception:
+                candidate_state = AMBIGUOUS
+                raise run_error
+            if presence == ABSENT:
+                candidate_state = ABSENT
+            elif presence == PRESENT:
+                try:
+                    candidate = inspect_container(A_NAME)
+                except Exception:
+                    candidate_state = AMBIGUOUS
+                else:
+                    if candidate.get("Image") == a_image_id and candidate.get("Id"):
+                        candidate_container_id = str(candidate["Id"])
+                        candidate_state = OWNED
+                    else:
+                        candidate_state = FOREIGN
+            else:
+                candidate_state = AMBIGUOUS
+            raise run_error
         startup_readiness = wait_for_readiness(A_NAME)
         a_identity = runtime_identity(A_NAME, A_REVISION)
-        a_identity["container_id"] = a_container_id
         a_identity["startup_readiness"] = startup_readiness
         a_identity["migrations"] = migration_identity()
         a_identity["network_members"] = network_members()
+        if a_identity.get("container_id") != a_container_id or a_identity.get("image_id") != a_image_id:
+            candidate_state = FOREIGN
+            raise RuntimeError("Candidate runtime identity changed before fault injection")
         expected_with_a = {**expected_shared_members, A_NAME: a_container_id}
         if a_identity["network_members"] not in (expected_with_a, {**expected_with_a, B_NAME: B_CONTAINER_ID}):
             raise RuntimeError(f"Candidate network identity mismatch: {a_identity['network_members']}")
@@ -355,7 +394,7 @@ def main() -> int:
 
         docker(["stop", A_NAME], True)
         a_stop_confirmed = True
-        a_started = False
+        candidate_state = OWNED
         docker(["start", B_NAME], True)
         b_stopped = False
         restored_identity = runtime_identity(B_NAME, B_REVISION)
@@ -370,7 +409,12 @@ def main() -> int:
         record["error"] = {"type": type(error).__name__, "message": str(error)}
         exit_code = 1
     finally:
-        a_stop_confirmed, recovery_errors = recover(a_started, a_stop_confirmed, b_stopped, a_image_id if "a_image_id" in locals() else "")
+        a_stop_confirmed, recovery_errors = recover(candidate_state, a_stop_confirmed, b_stopped, a_image_id if "a_image_id" in locals() else "", candidate_container_id)
+        record["recovery"] = {
+            "candidate_state": candidate_state,
+            "candidate_stop_confirmed": a_stop_confirmed,
+            "errors": recovery_errors,
+        }
         if recovery_errors:
             record["terminal"] = "failed"
             record["recovery_errors"] = recovery_errors

@@ -70,6 +70,74 @@ function parseJson(files, relativePath) {
 }
 
 /**
+ * Parse the narrow workflow step shape used by this repository. Unsupported step
+ * mappings fail closed so comments and arbitrary YAML scalars cannot satisfy a
+ * runtime command check.
+ * @param {string} workflow
+ * @returns {Array<{uses: string, run: string, ifCondition: (string|null), shell: (string|null), continueOnError: (string|null)}>}
+ */
+function parseWorkflowSteps(workflow) {
+  const lines = workflow.split('\n');
+  const stepsLine = lines.findIndex((line) => line === '    steps:');
+  requireExact(stepsLine >= 0, 'workflow Node job must define steps');
+  const starts = [];
+  for (let index = stepsLine + 1; index < lines.length; index += 1) {
+    if (/^      - /.test(lines[index])) starts.push(index);
+  }
+  requireExact(starts.length > 0, 'workflow Node job must define executable step mappings');
+  return starts.map((start, position) => {
+    const end = starts[position + 1] ?? lines.length;
+    const block = lines.slice(start, end);
+    requireExact(/^      - name:\s*\S/.test(block[0]), 'workflow steps must use named mappings');
+    const runLines = block.filter((line) => /^        run:/.test(line));
+    const usesLines = block.filter((line) => /^        uses:/.test(line));
+    requireExact(runLines.length <= 1 && usesLines.length <= 1, 'workflow steps must not duplicate run or uses fields');
+    const readField = (field) => {
+      const matches = block.filter((line) => line.startsWith(`        ${field}:`));
+      requireExact(matches.length <= 1, `workflow steps must not duplicate ${field} fields`);
+      return matches.length === 1 ? matches[0].slice(`        ${field}:`.length).trim() : null;
+    };
+    let run = '';
+    if (runLines.length === 1) {
+      const runIndex = block.indexOf(runLines[0]);
+      const value = runLines[0].replace(/^        run:\s*/, '');
+      requireExact(value !== '', 'workflow run fields must have a command');
+      if (/^\|[-+]?\s*$/.test(value)) {
+        const body = [];
+        for (const line of block.slice(runIndex + 1)) {
+          const trimmed = line.trim();
+          if (trimmed === '' || trimmed.startsWith('#')) continue;
+          const indentation = line.match(/^\s*/)?.[0].length ?? 0;
+          if (indentation < 10) break;
+          body.push(line.slice(10));
+        }
+        run = body.join('\n');
+      } else if (!value.startsWith('#')) {
+        requireExact(!value.startsWith('>'), 'workflow run fields must use literal block scalars');
+        run = value;
+      }
+    }
+    const uses = usesLines.length === 1 ? usesLines[0].replace(/^        uses:\s*/, '').split(/\s+#/, 1)[0].trim() : '';
+    requireExact(!(runLines.length === 1 && usesLines.length === 1), 'workflow steps must not combine run and uses');
+    return {
+      uses,
+      run,
+      ifCondition: readField('if'),
+      shell: readField('shell'),
+      continueOnError: readField('continue-on-error'),
+    };
+  });
+}
+
+/** @param {string} run @returns {Array<string>} */
+function executableRunLines(run) {
+  return run
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+}
+
+/**
  * @param {Map<string, string>} files
  * @param {string} observedNodeVersion
  * @param {string} observedNodeAbi
@@ -149,15 +217,47 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
     const nodeJobs = jobs.filter((job) => job.includes('uses: actions/setup-node@'));
     requireExact(nodeJobs.length > 0, `${relativePath} must contain setup-node jobs`);
     for (const job of nodeJobs) {
-      const installCommand = `npm install --global --ignore-scripts npm@${NPM_VERSION}`;
-      const verifyCommand = `test "$(npm --version)" = "${NPM_VERSION}"`;
-      const installIndex = job.indexOf(installCommand);
-      const verifyIndex = job.indexOf(verifyCommand);
-      const runtimeIndex = job.indexOf('node scripts/check-runtime-contract.mjs');
+      const steps = parseWorkflowSteps(job);
+      const setupSteps = steps.filter((step) => step.uses.startsWith('actions/setup-node@'));
+      const npmSteps = steps.filter((step) => {
+        const lines = executableRunLines(step.run);
+        return JSON.stringify(lines) === JSON.stringify([
+          `npm install --global --ignore-scripts npm@${NPM_VERSION}`,
+          `test "$(npm --version)" = "${NPM_VERSION}"`,
+        ]) || JSON.stringify(lines) === JSON.stringify([
+          'set -euo pipefail',
+          `npm install --global --ignore-scripts npm@${NPM_VERSION}`,
+          `test "$(npm --version)" = "${NPM_VERSION}"`,
+        ]);
+      });
+      const runtimeSteps = steps.filter((step) => {
+        const lines = executableRunLines(step.run);
+        return JSON.stringify(lines) === JSON.stringify(['node scripts/check-runtime-contract.mjs']) ||
+          JSON.stringify(lines) === JSON.stringify(['set -euo pipefail', 'node scripts/check-runtime-contract.mjs']);
+      });
+      requireExact(setupSteps.length === 1 && npmSteps.length === 1 && runtimeSteps.length === 1, `${relativePath} each Node job must contain one canonical setup, npm, and runtime step`);
+      const packageCondition = relativePath === '.github/workflows/quality-gate.yml'
+        ? "${{ hashFiles('**/package.json') != '' }}"
+        : null;
+      const runtimeCondition = relativePath === '.github/workflows/quality-gate.yml'
+        ? "${{ hashFiles('package-lock.json') != '' }}"
+        : null;
+      const validateCriticalStep = (step, label, expectedCondition) => {
+        requireExact(step.ifCondition === null || step.ifCondition === expectedCondition, `${relativePath} ${label} step has an unsupported condition`);
+        requireExact(step.shell === null || step.shell === 'bash', `${relativePath} ${label} step must use the default shell or bash`);
+        requireExact(step.continueOnError === null || step.continueOnError === 'false', `${relativePath} ${label} step must not suppress errors`);
+      };
+      validateCriticalStep(setupSteps[0], 'setup-node', packageCondition);
+      validateCriticalStep(npmSteps[0], 'npm bootstrap', packageCondition);
+      validateCriticalStep(runtimeSteps[0], 'runtime check', runtimeCondition);
+      const installSteps = steps.filter((step) => executableRunLines(step.run).some((line) => /\bnpm ci\b/.test(line)));
+      const setupIndex = steps.indexOf(setupSteps[0]);
+      const npmIndex = steps.indexOf(npmSteps[0]);
+      const runtimeIndex = steps.indexOf(runtimeSteps[0]);
+      const installIndex = installSteps.length > 0 ? steps.indexOf(installSteps[0]) : runtimeIndex + 1;
       requireExact(
-        job.split(installCommand).length - 1 === 1 &&
-          job.split(verifyCommand).length - 1 === 1 &&
-          installIndex >= 0 && verifyIndex > installIndex && runtimeIndex > verifyIndex,
+        setupSteps.length === 1 && npmSteps.length === 1 && runtimeSteps.length === 1 &&
+          setupIndex >= 0 && npmIndex > setupIndex && runtimeIndex > npmIndex && installIndex > runtimeIndex,
         `${relativePath} each Node job must pin npm ${NPM_VERSION} before the runtime check`,
       );
     }

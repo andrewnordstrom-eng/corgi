@@ -1,22 +1,50 @@
-[
-  {
-    "path": "package-lock.json",
-    "package_entries": 617,
-    "non_engine_metadata_equal": true
+{
+  "recorded_at": "2026-09-15T08:30:28.742652+00:00",
+  "base_sha": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
+  "candidate_sha": "90911545431db38c31519fa2a4cc8ca5867d3e0c",
+  "comparison_method": {
+    "read": "git show <revision>:<path> for each exact revision; parse as JSON",
+    "normalization": "Remove only packages[\"\"].engines in all four locks and packages[\"packages/feed-sdk\"].engines in the root lock; retain every other key/value",
+    "equality": "Compare parsed normalized JSON objects for equality",
+    "hash": "SHA-256 of UTF-8 Python json.dumps(value, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=True), without trailing newline",
+    "working_tree_binding": "Candidate raw hashes also match current working-tree bytes at generation time"
   },
-  {
-    "path": "cli/package-lock.json",
-    "package_entries": 46,
-    "non_engine_metadata_equal": true
-  },
-  {
-    "path": "web/package-lock.json",
-    "package_entries": 258,
-    "non_engine_metadata_equal": true
-  },
-  {
-    "path": "web-next/package-lock.json",
-    "package_entries": 566,
-    "non_engine_metadata_equal": true
-  }
-]
+  "results": [
+    {
+      "path": "package-lock.json",
+      "package_entries": 617,
+      "non_engine_metadata_equal": true,
+      "base_raw_sha256": "8e0c6b55e29031d4f016870a70bc471a7bfd79000cd3c9b35ac867e7aee228cb",
+      "candidate_raw_sha256": "a82ad6572d4fb5797d9005d725ba8c052b429b84f0cd29fca0540dc79109ea0b",
+      "base_normalized_sha256": "bad1354109964ef27a027538fea6bea58ed1f8e0ec5d9a35b334120fd3ae02a8",
+      "candidate_normalized_sha256": "bad1354109964ef27a027538fea6bea58ed1f8e0ec5d9a35b334120fd3ae02a8"
+    },
+    {
+      "path": "cli/package-lock.json",
+      "package_entries": 46,
+      "non_engine_metadata_equal": true,
+      "base_raw_sha256": "6cb9babed6ed7b01e033a18b8dfe5d7199910a744819e06e2a0fc7879546ba96",
+      "candidate_raw_sha256": "8633f3a0240a0dd7b845dd3cfcdc473758e3a70f85e8b51f7e60e5b6c9df88db",
+      "base_normalized_sha256": "3f37e33bfad03d7aa04c2761f05e1ed5ba53e6d9dadc6448a5ef8fa7e0600adc",
+      "candidate_normalized_sha256": "3f37e33bfad03d7aa04c2761f05e1ed5ba53e6d9dadc6448a5ef8fa7e0600adc"
+    },
+    {
+      "path": "web/package-lock.json",
+      "package_entries": 258,
+      "non_engine_metadata_equal": true,
+      "base_raw_sha256": "3ca27900d8d929f76b1ab2811d57b49eafcde8c39643dc6529f3ff80d90620d5",
+      "candidate_raw_sha256": "36872b4b2965e87f79403d594274daf5203a4d6cab3fd2ad1e7f39133f4e897f",
+      "base_normalized_sha256": "4ce5410d879b424106ca4ce191147ebe0bad6bfc0ba28277bee6770deafecbde",
+      "candidate_normalized_sha256": "4ce5410d879b424106ca4ce191147ebe0bad6bfc0ba28277bee6770deafecbde"
+    },
+    {
+      "path": "web-next/package-lock.json",
+      "package_entries": 566,
+      "non_engine_metadata_equal": true,
+      "base_raw_sha256": "2610921b172ef5e7bcf97313370811aa0844ef2b2456a56d01e69c38094ee576",
+      "candidate_raw_sha256": "84d031d5e38ff0d22012bd8acac9b0feedb198dcb9ff6f11639e40511ddaa03c",
+      "base_normalized_sha256": "1aa17dbe8a20bbce19c8ac4d71181a735268393d98bbd00f5eae05e928c13e32",
+      "candidate_normalized_sha256": "1aa17dbe8a20bbce19c8ac4d71181a735268393d98bbd00f5eae05e928c13e32"
+    }
+  ]
+}

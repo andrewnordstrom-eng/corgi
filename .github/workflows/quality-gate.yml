@@ -18,6 +18,8 @@ jobs:
       # keep runtime enforcement in this repository before its dependency install.
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js (if needed)
         if: ${{ hashFiles('**/package.json') != '' }}
