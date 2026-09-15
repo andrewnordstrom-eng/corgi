@@ -1,0 +1,57 @@
+{
+  "observations": [
+    {
+      "time": 1789442033480,
+      "correlationId": "b3e29fce",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 4.41945799999985
+    },
+    {
+      "time": 1789442037391,
+      "correlationId": "4bdaf69e",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 0.888582999999926
+    },
+    {
+      "time": 1789442065989,
+      "correlationId": "1a1f5f39",
+      "url": "/health/ready",
+      "statusCode": 500,
+      "responseTime": 158.25270799999998
+    },
+    {
+      "time": 1789442067465,
+      "correlationId": "1722105c",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 2.9712500000023283
+    },
+    {
+      "time": 1789442093730,
+      "correlationId": "b4c84443",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 0.8490410000013071
+    },
+    {
+      "time": 1789442097548,
+      "correlationId": "af8248c5",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 1.0469579999989946
+    },
+    {
+      "time": 1789442127630,
+      "correlationId": "32978422",
+      "url": "/health/ready",
+      "statusCode": 200,
+      "responseTime": 3.1064579999947455
+    }
+  ],
+  "non_200_during_failure": true,
+  "recovered": true,
+  "unexpected_status": "500 rather than documented 503; retained as an unresolved response-contract observation",
+  "rollback_rehearsal": false
+}

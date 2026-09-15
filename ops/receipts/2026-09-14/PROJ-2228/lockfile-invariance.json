@@ -1,0 +1,26 @@
+[
+  {
+    "path": "package-lock.json",
+    "packages": 617,
+    "non_engine_content_unchanged": true,
+    "sha256": "ba277bdd0b17e5fac279b4983446290eb903413527f3efece39b8b92be9d758a"
+  },
+  {
+    "path": "cli/package-lock.json",
+    "packages": 46,
+    "non_engine_content_unchanged": true,
+    "sha256": "e691e28e092c8192e5c554ae05075cfc1c9d613f6c7ea32e3d1d84bfc9e453b3"
+  },
+  {
+    "path": "web/package-lock.json",
+    "packages": 258,
+    "non_engine_content_unchanged": true,
+    "sha256": "e1cbff43710b46039c35b2a1ebf95f8626a26c7f45157a09505296221384a9fe"
+  },
+  {
+    "path": "web-next/package-lock.json",
+    "packages": 566,
+    "non_engine_content_unchanged": true,
+    "sha256": "971684afb8f2a8e07cad8070aeb194a6fa22a59362535c7b8b23e06b002a67d1"
+  }
+]

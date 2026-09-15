@@ -4,7 +4,7 @@ Status: canonical repo contract
 Owner: bluesky-feed
 Service class: production_service
 Contract version: 2
-Last updated: 2026-09-07
+Last updated: 2026-09-15
 Last verified: not yet rehearsed for the 2026-08-02 workflow revision
 
 > Canonical reference for any human or tooling operating in this repo.
@@ -90,7 +90,7 @@ posts are ranked. This feed exists to:
                                           +------------+
 ```
 
-**Runtime:** Node.js 20, TypeScript 5, Fastify 5
+**Runtime:** Node.js 22.23.2, TypeScript 5, Fastify 5
 **Data layer:** PostgreSQL 16 (posts, scores, governance, audit), Redis 7 (feed
 cache, sessions)
 **Frontend:** Next.js 15 static export, React 19, Tailwind (public pages,
@@ -99,7 +99,7 @@ transparency dashboard, voting UI)
 **NLP:** winkNLP (topic classification at ingestion), HuggingFace Transformers
 (embedding-based classification)
 **Deploy target:** DigitalOcean VPS via systemd + nginx reverse proxy
-**Container:** Multi-stage Docker build (node:20-alpine)
+**Container:** Multi-stage Docker build (node:22.23.2-bookworm-slim)
 
 ---
 

@@ -33,10 +33,11 @@
     "lab:memory-prod-parity": "npm run build:lab-memory && node dist-lab/scripts/memory-isolated-stress.js --prod-parity",
     "report:pdf": "python3 scripts/generate-report-pdf.py",
     "build:mcp-local": "if [ -f src/mcp-local/tsconfig.json ]; then cd src/mcp-local && npx tsc -p tsconfig.json; else echo 'src/mcp-local not present; skipping build:mcp-local'; fi",
+    "runtime:verify": "node scripts/check-runtime-contract.mjs",
     "sdk:build": "cd packages/feed-sdk && tsc -p tsconfig.json",
     "sdk:clean": "cd packages/feed-sdk && rm -rf dist",
     "sdk:fixture": "tsc -p tests/fixtures/example-external-component.tsconfig.json",
-    "verify": "npm run docs:verify && npm run build && npm test -- --run && npm run cli:build && npm run build:mcp-local && npm run sdk:build && npm run sdk:fixture && cd web && npm run lint && npm run build && cd ../web-next && npm run build",
+    "verify": "npm run runtime:verify && npm run docs:verify && npm run build && npm test -- --run && npm run cli:build && npm run build:mcp-local && npm run sdk:build && npm run sdk:fixture && cd web && npm run lint && npm run build && cd ../web-next && npm run build",
     "prepare": "husky"
   },
   "workspaces": [
@@ -86,7 +87,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.23.2"
   },
   "repository": {
     "type": "git",

@@ -1,0 +1,50 @@
+{
+  "recorded_at": "2026-09-15T07:09:00.183520+00:00",
+  "status": "REVIEW_FINDINGS_FIXED_AND_VERIFIED",
+  "approved_patch_sha256": "4caddeb1db71ac7909e58cab278bdd6f7c4a36f3bdcfe224344963575c62a9c0",
+  "review_entries": 3,
+  "unique_findings": 2,
+  "fixes": [
+    "Exact checksum-verified Node archive installation replaces floating NodeSource instructions",
+    "Validate observed Node ABI; reject mismatches"
+  ],
+  "personal_full_verify": {
+    "exit_code": 0,
+    "test_files_passed": 160,
+    "tests_passed": 2271,
+    "tests_skipped": 1
+  },
+  "independent_focused_qa": {
+    "exit_code": 0,
+    "test_files_passed": 2,
+    "tests_passed": 387
+  },
+  "disposable_linux_documented_install": {
+    "exit_code": 0,
+    "node": "22.23.2",
+    "abi": "127"
+  },
+  "renewed_admission": {
+    "decision": "ALLOW",
+    "lease_id": "atl-566965bca06e5173",
+    "fencing_token": 272
+  },
+  "logs": {
+    "coderabbit-approved-review.log": {
+      "path": "/private/tmp/corgi-2228-validation/coderabbit-approved-review.log",
+      "sha256": "31241b99d04792c8c2db64762c59891d58a4f244257ece9f338cb7357b2ad1bb"
+    },
+    "full-verify-review-fixed.log": {
+      "path": "/private/tmp/corgi-2228-validation/full-verify-review-fixed.log",
+      "sha256": "5d66e0ea23680682f486b64f87c3fa7d89e357282bd2590fddc85fdb6b5dce58"
+    },
+    "docs-runtime-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/docs-runtime-install.log",
+      "sha256": "f579c4540f6cbe4c3bfffff8cb3b048eca953a1bb3e7957ac54044b495718600"
+    },
+    "qa-reviewed-focused.log": {
+      "path": "/private/tmp/corgi-2228-validation/qa-reviewed-focused.log",
+      "sha256": "df9130da7f7baf3e4b6be84f6696249bf6b6282e55f4cb598d5783ee36ed0ebf"
+    }
+  }
+}
