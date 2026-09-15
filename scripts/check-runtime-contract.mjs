@@ -25,6 +25,7 @@ const WORKFLOW_FILES = [
   '.github/workflows/deploy.yml',
   '.github/workflows/docs-freshness.yml',
   '.github/workflows/examples-build.yml',
+  '.github/workflows/quality-gate.yml',
 ];
 const WORKSPACE_MANIFESTS = [
   'packages/feed-sdk/package.json',

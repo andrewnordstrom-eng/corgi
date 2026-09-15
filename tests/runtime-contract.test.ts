@@ -20,6 +20,8 @@ const RUNTIME_DRIFT_CASES: Array<[string, SourceMutation]> = [
   ['SDK engine', (files) => files.set('packages/feed-sdk/package.json', files.get('packages/feed-sdk/package.json')!.replace('>=22.23.2', '>=20.19.0'))],
   ['workflow pin', (files) => files.set('.github/workflows/examples-build.yml', files.get('.github/workflows/examples-build.yml')!.replace('22.23.2', '22'))],
   ['workflow npm pin', (files) => files.set('.github/workflows/examples-build.yml', files.get('.github/workflows/examples-build.yml')!.replaceAll('11.19.1', '10.9.8'))],
+  ['quality-gate Node pin', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("node-version: '22.23.2'", "node-version: '24'"))],
+  ['quality-gate npm pin', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replaceAll('11.19.1', '10.9.8'))],
   ['Docker workspace manifest', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replace('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', ''))],
   ['Docker workspace manifest wildcard lookalike', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replaceAll('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', 'COPY packages/feed-sdk/packageXjson x/packages/feed-sdk/packageXjson'))],
   ['Docker npmrc stage placement', (files) => {
