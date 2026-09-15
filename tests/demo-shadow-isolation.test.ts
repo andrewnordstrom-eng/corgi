@@ -1629,6 +1629,22 @@ describe('production exact-SHA promotion guards', () => {
     }
   });
 
+  it('allows only the exact pinned package-manager bootstrap on the runner', () => {
+    const command = 'npm install --global --ignore-scripts npm@11.19.1';
+    expect(() => assertLifecycleScriptContract(command, '')).not.toThrow();
+    expect(() => assertLifecycleScriptContract('', command)).toThrow('Deployment install must disable lifecycle scripts');
+  });
+
+  it.each([
+    'npm install --global npm@11.19.1',
+    'npm install --global --ignore-scripts npm@latest',
+    'npm install --global --ignore-scripts npm@11.19.1 other-package',
+    'npm install --global --ignore-scripts npm@11.19.1 --ignore-scripts=false',
+    'npm --prefix /tmp/other install --global --ignore-scripts npm@11.19.1',
+  ])('rejects unsafe package-manager bootstrap drift: %s', (command) => {
+    expect(() => assertLifecycleScriptContract(command, '')).toThrow('Deployment install must disable lifecycle scripts');
+  });
+
   it.each([
     '${{ inputs.sha }}',
     '${{ github.event.inputs.sha }}',
@@ -3627,20 +3643,25 @@ function runReceiptValidation(
 }
 
 function assertLifecycleScriptContract(runnerScript: string, remoteScript: string): void {
-  for (const line of executableLines(`${runnerScript}\n${remoteScript}`)) {
-    for (const invocation of npmCommandInvocations(line)) {
-      if (
-        ['ci', 'install', 'i', 'add'].includes(invocation.command) &&
-        (invocation.command !== 'ci' || !invocation.args.includes('--ignore-scripts'))
-      ) {
-        throw new Error('Deployment install must disable lifecycle scripts');
+  for (const [script, allowBootstrap] of [[runnerScript, true], [remoteScript, false]] as const) {
+    for (const line of executableLines(script)) {
+      if (allowBootstrap && line.trim() === 'npm install --global --ignore-scripts npm@11.19.1') {
+        continue;
       }
-      if (invocation.command === 'exec') {
+      for (const invocation of npmCommandInvocations(line)) {
+        if (
+          ['ci', 'install', 'i', 'add'].includes(invocation.command) &&
+          (invocation.command !== 'ci' || !invocation.args.includes('--ignore-scripts'))
+        ) {
+          throw new Error('Deployment install must disable lifecycle scripts');
+        }
+        if (invocation.command === 'exec') {
+          throw new Error('Deployment executable must prohibit implicit package installation');
+        }
+      }
+      if (/\bnpx\b/.test(line)) {
         throw new Error('Deployment executable must prohibit implicit package installation');
       }
-    }
-    if (/\bnpx\b/.test(line)) {
-      throw new Error('Deployment executable must prohibit implicit package installation');
     }
   }
 }

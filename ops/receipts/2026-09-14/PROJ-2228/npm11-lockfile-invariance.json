@@ -1,0 +1,22 @@
+[
+  {
+    "path": "package-lock.json",
+    "package_entries": 617,
+    "non_engine_metadata_equal": true
+  },
+  {
+    "path": "cli/package-lock.json",
+    "package_entries": 46,
+    "non_engine_metadata_equal": true
+  },
+  {
+    "path": "web/package-lock.json",
+    "package_entries": 258,
+    "non_engine_metadata_equal": true
+  },
+  {
+    "path": "web-next/package-lock.json",
+    "package_entries": 566,
+    "non_engine_metadata_equal": true
+  }
+]

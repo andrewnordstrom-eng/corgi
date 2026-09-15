@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const RUNTIME_VERSION = '22.23.2';
 export const RUNTIME_ABI = '127';
+export const NPM_VERSION = '11.19.1';
 export const BASE_IMAGE =
   'node:22.23.2-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5';
 
@@ -70,12 +72,14 @@ function parseJson(files, relativePath) {
  * @param {Map<string, string>} files
  * @param {string} observedNodeVersion
  * @param {string} observedNodeAbi
- * @returns {{version: string, abi: string}}
+ * @param {string} observedNpmVersion
+ * @returns {{version: string, abi: string, npm: string}}
  */
-export function validateRuntimeSources(files, observedNodeVersion, observedNodeAbi) {
+export function validateRuntimeSources(files, observedNodeVersion, observedNodeAbi, observedNpmVersion) {
   requireExact(files.get('.nvmrc')?.trim() === RUNTIME_VERSION, `.nvmrc must pin Node ${RUNTIME_VERSION}`);
   requireExact(observedNodeVersion === RUNTIME_VERSION, `running Node must be ${RUNTIME_VERSION}, got ${observedNodeVersion}`);
   requireExact(observedNodeAbi === RUNTIME_ABI, `running Node ABI must be ${RUNTIME_ABI}, got ${observedNodeAbi}`);
+  requireExact(observedNpmVersion === NPM_VERSION, `running npm must be ${NPM_VERSION}, got ${observedNpmVersion}`);
 
   for (const relativePath of PACKAGE_FILES) {
     const manifest = parseJson(files, relativePath);
@@ -83,6 +87,10 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
       manifest.engines?.node === `>=${RUNTIME_VERSION}`,
       `${relativePath} must require Node >=${RUNTIME_VERSION}`,
     );
+    if (relativePath !== 'packages/feed-sdk/package.json') {
+      requireExact(manifest.engines?.npm === NPM_VERSION, `${relativePath} must require npm ${NPM_VERSION}`);
+      requireExact(manifest.packageManager === `npm@${NPM_VERSION}`, `${relativePath} must pin npm@${NPM_VERSION}`);
+    }
     if (relativePath === 'package.json') {
       requireExact(
         manifest.scripts?.['runtime:verify'] === 'node scripts/check-runtime-contract.mjs' &&
@@ -96,6 +104,10 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
     requireExact(
       lockfile.packages?.['']?.engines?.node === `>=${RUNTIME_VERSION}`,
       `${relativePath} root package must require Node >=${RUNTIME_VERSION}`,
+    );
+    requireExact(
+      lockfile.packages?.['']?.engines?.npm === NPM_VERSION,
+      `${relativePath} root package must require npm ${NPM_VERSION}`,
     );
     if (relativePath === 'package-lock.json') {
       requireExact(
@@ -131,6 +143,23 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
         /^\s+node scripts\/check-runtime-contract\.mjs\s*$/m.test(workflow),
       `${relativePath} must execute the runtime contract check`,
     );
+    const jobStarts = [...workflow.matchAll(/^  [A-Za-z0-9_-]+:\s*$/gm)].map((match) => match.index ?? 0);
+    const jobs = jobStarts.map((start, index) => workflow.slice(start, jobStarts[index + 1] ?? workflow.length));
+    const nodeJobs = jobs.filter((job) => job.includes('uses: actions/setup-node@'));
+    requireExact(nodeJobs.length > 0, `${relativePath} must contain setup-node jobs`);
+    for (const job of nodeJobs) {
+      const installCommand = `npm install --global --ignore-scripts npm@${NPM_VERSION}`;
+      const verifyCommand = `test "$(npm --version)" = "${NPM_VERSION}"`;
+      const installIndex = job.indexOf(installCommand);
+      const verifyIndex = job.indexOf(verifyCommand);
+      const runtimeIndex = job.indexOf('node scripts/check-runtime-contract.mjs');
+      requireExact(
+        job.split(installCommand).length - 1 === 1 &&
+          job.split(verifyCommand).length - 1 === 1 &&
+          installIndex >= 0 && verifyIndex > installIndex && runtimeIndex > verifyIndex,
+        `${relativePath} each Node job must pin npm ${NPM_VERSION} before the runtime check`,
+      );
+    }
   }
 
   const dockerfile = files.get('Dockerfile') ?? '';
@@ -155,8 +184,22 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
       builderStage.includes("RUN test \"${#SOURCE_REVISION}\" -eq 40 && printf '%s\\n' \"$SOURCE_REVISION\" | grep -Eq '^[0-9a-f]{40}$'"),
     'Dockerfile builder stage must validate SOURCE_REVISION as a full lowercase SHA',
   );
-  requireExact((dockerfile.match(/COPY \.npmrc \.\//g) ?? []).length === 2, 'Dockerfile must carry engine-strict config into both stages');
   const productionStage = dockerfile.slice(productionStageStart < 0 ? 0 : productionStageStart);
+  for (const [stageName, stageSource] of [['builder', builderStage], ['production', productionStage]]) {
+    const matchingLines = stageSource.split('\n').filter((line) => line.trim() === 'COPY .npmrc ./');
+    requireExact(
+      matchingLines.length === 1,
+      `Dockerfile ${stageName} stage must carry engine-strict config exactly once`,
+    );
+    const npmInstallLine = `RUN npm install --global --ignore-scripts npm@${NPM_VERSION} && test "$(npm --version)" = "${NPM_VERSION}"`;
+    const npmInstallIndex = stageSource.indexOf(npmInstallLine);
+    const npmCiIndex = stageSource.indexOf('RUN npm ci');
+    requireExact(
+      stageSource.split('\n').filter((line) => line.trim() === npmInstallLine).length === 1 &&
+        npmInstallIndex >= 0 && npmCiIndex > npmInstallIndex,
+      `Dockerfile ${stageName} stage must pin npm ${NPM_VERSION} before installs`,
+    );
+  }
   for (const relativePath of WORKSPACE_MANIFESTS) {
     const instruction = `COPY ${relativePath} ./${relativePath}`;
     for (const [stageName, stageSource] of [['builder', builderStage], ['production', productionStage]]) {
@@ -191,15 +234,17 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
       `.dockerignore must not exclude ${relativePath}`,
     );
   }
-  return { version: RUNTIME_VERSION, abi: RUNTIME_ABI };
+  return { version: RUNTIME_VERSION, abi: RUNTIME_ABI, npm: NPM_VERSION };
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const observedNpmVersion = execFileSync('npm', ['--version'], { encoding: 'utf8', timeout: 10_000 }).trim();
   const result = validateRuntimeSources(
     loadRuntimeSources(repositoryRoot),
     process.versions.node,
     process.versions.modules,
+    observedNpmVersion,
   );
-  console.log(`runtime-contract: PASS node=${result.version} abi=${result.abi}`);
+  console.log(`runtime-contract: PASS node=${result.version} abi=${result.abi} npm=${result.npm}`);
 }

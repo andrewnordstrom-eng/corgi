@@ -22,6 +22,7 @@ A_REVISION = "e4ff4bbdf04e07bd23956752ce08d61f99c4daa4"
 A_NAME = "corgi-2228-app-a"
 PG_NAME = "corgi-2228-pg"
 EXPECTED_MIGRATIONS = 34
+DOCKER_TIMEOUT_SECONDS = 30
 
 SETTINGS = {
     "NODE_ENV": "production",
@@ -46,8 +47,43 @@ SETTINGS = {
 }
 
 
+class DockerTimeoutError(RuntimeError):
+    pass
+
+
+class DockerCommandError(RuntimeError):
+    pass
+
+
+def safe_operation(arguments: list[str]) -> str:
+    sanitized: list[str] = []
+    redact_next = False
+    for argument in arguments:
+        if redact_next:
+            sanitized.append("<redacted>")
+            redact_next = False
+        elif argument == "--env":
+            sanitized.append(argument)
+            redact_next = True
+        else:
+            sanitized.append(argument)
+    return " ".join(sanitized)
+
+
 def docker(arguments: list[str], check: bool) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([DOCKER, *arguments], capture_output=True, text=True, check=check)
+    operation = safe_operation(arguments)
+    try:
+        return subprocess.run(
+            [DOCKER, *arguments],
+            capture_output=True,
+            text=True,
+            check=check,
+            timeout=DOCKER_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise DockerTimeoutError(f"Docker operation timed out: {operation}") from error
+    except subprocess.CalledProcessError as error:
+        raise DockerCommandError(f"Docker operation failed with exit {error.returncode}: {operation}") from error
 
 
 def docker_json(arguments: list[str]) -> Any:
@@ -72,6 +108,30 @@ def inspect_container(name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(f"Malformed container inspection for {name}")
     return value
+
+
+def assert_candidate_name_absent() -> None:
+    result = docker(
+        ["ps", "-a", "--filter", f"name=^{A_NAME}$", "--format", "{{.ID}}"],
+        True,
+    )
+    if result.stdout.strip():
+        raise RuntimeError(f"Candidate container name already exists: {A_NAME}")
+
+
+def run_candidate(run_arguments: list[str], expected_image_id: str) -> str:
+    try:
+        return docker(run_arguments, True).stdout.strip()
+    except Exception as run_error:
+        try:
+            ambiguous_candidate = inspect_container(A_NAME)
+        except Exception as inspect_error:
+            raise run_error from inspect_error
+        if ambiguous_candidate.get("Image") != expected_image_id:
+            raise RuntimeError(
+                "Candidate run failed and the named container is not the expected immutable image"
+            ) from run_error
+        raise run_error
 
 
 def exec_text(name: str, arguments: list[str]) -> str:
@@ -177,6 +237,45 @@ def network_members() -> dict[str, str]:
     }
 
 
+def recover(
+    candidate_running: bool,
+    candidate_stop_confirmed: bool,
+    known_good_stopped: bool,
+    expected_image_id: str,
+) -> tuple[bool, list[str]]:
+    recovery_errors: list[str] = []
+    if candidate_running and not candidate_stop_confirmed:
+        try:
+            candidate = inspect_container(A_NAME)
+        except Exception as error:
+            recovery_errors.append(f"candidate identity unavailable; cleanup withheld: {type(error).__name__}: {error}")
+        else:
+            if candidate.get("Image") != expected_image_id:
+                recovery_errors.append("candidate identity mismatch; cleanup withheld")
+            else:
+                try:
+                    stopped = docker(["stop", A_NAME], False)
+                except Exception as error:
+                    recovery_errors.append(f"stop candidate recovery failed: {type(error).__name__}: {error}")
+                else:
+                    if stopped.returncode == 0:
+                        candidate_stop_confirmed = True
+                    else:
+                        recovery_errors.append("stop candidate recovery failed: docker stop returned nonzero")
+    if known_good_stopped:
+        if not candidate_stop_confirmed:
+            recovery_errors.append("known-good restore withheld because candidate stop was not confirmed")
+        else:
+            try:
+                started = docker(["start", B_NAME], False)
+            except Exception as error:
+                recovery_errors.append(f"restore known-good failed: {type(error).__name__}: {error}")
+            else:
+                if started.returncode != 0:
+                    recovery_errors.append("restore known-good failed: docker start returned nonzero")
+    return candidate_stop_confirmed, recovery_errors
+
+
 def main() -> int:
     record: dict[str, Any] = {
         "scope": "bounded local retained-image rollback rehearsal",
@@ -187,6 +286,8 @@ def main() -> int:
     }
     b_stopped = False
     a_started = False
+    a_stop_confirmed = False
+    exit_code = 0
     try:
         smoke_resources = json.loads(SMOKE_RESOURCES.read_text())
         expected_shared_members = {
@@ -215,14 +316,15 @@ def main() -> int:
         record["candidate"]["image_id"] = a_image_id
         record_step(record, "candidate_image_resolved", {"tag": A_TAG, "image_id": a_image_id})
 
+        assert_candidate_name_absent()
         docker(["stop", B_NAME], True)
         b_stopped = True
+        a_started = True
         run_arguments = ["run", "-d", "--name", A_NAME, "--network", NETWORK]
         for key, value in SETTINGS.items():
             run_arguments.extend(["--env", f"{key}={value}"])
         run_arguments.append(a_image_id)
-        a_container_id = docker(run_arguments, True).stdout.strip()
-        a_started = True
+        a_container_id = run_candidate(run_arguments, a_image_id)
         startup_readiness = wait_for_readiness(A_NAME)
         a_identity = runtime_identity(A_NAME, A_REVISION)
         a_identity["container_id"] = a_container_id
@@ -252,6 +354,7 @@ def main() -> int:
         record_step(record, "candidate_failure_observed", {"bounded_seconds": 60, "probes": failures})
 
         docker(["stop", A_NAME], True)
+        a_stop_confirmed = True
         a_started = False
         docker(["start", B_NAME], True)
         b_stopped = False
@@ -262,27 +365,20 @@ def main() -> int:
         restored_identity["migrations"] = migration_identity()
         record_step(record, "known_good_restored", restored_identity)
         record["terminal"] = "passed"
-        return 0
     except Exception as error:
         record["terminal"] = "failed"
         record["error"] = {"type": type(error).__name__, "message": str(error)}
-        return 1
+        exit_code = 1
     finally:
-        recovery_errors: list[str] = []
-        if a_started:
-            stopped = docker(["stop", A_NAME], False)
-            if stopped.returncode != 0:
-                recovery_errors.append(f"stop candidate: {stopped.stderr.strip()}")
-        if b_stopped:
-            started = docker(["start", B_NAME], False)
-            if started.returncode != 0:
-                recovery_errors.append(f"restore known-good: {started.stderr.strip()}")
+        a_stop_confirmed, recovery_errors = recover(a_started, a_stop_confirmed, b_stopped, a_image_id if "a_image_id" in locals() else "")
         if recovery_errors:
             record["terminal"] = "failed"
             record["recovery_errors"] = recovery_errors
+            exit_code = 1
         OUT.write_text(json.dumps(record, indent=2) + "\n")
         if record.get("terminal") != "passed":
             print(json.dumps(record), file=sys.stderr)
+    return exit_code
 
 
 if __name__ == "__main__":

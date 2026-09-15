@@ -65,6 +65,11 @@ existing runtime installation.
     --no-same-owner --no-same-permissions --directory /opt/corgi-node-v22.23.2
 )
 export PATH="/opt/corgi-node-v22.23.2/bin:$PATH"
+# Install the exact package manager into this versioned runtime prefix.
+sudo /opt/corgi-node-v22.23.2/bin/node \
+  /opt/corgi-node-v22.23.2/lib/node_modules/npm/bin/npm-cli.js \
+  install --global --prefix /opt/corgi-node-v22.23.2 --ignore-scripts npm@11.19.1
+test "$(npm --version)" = "11.19.1"
 ```
 
 ## 3. Create PostgreSQL database
@@ -89,11 +94,12 @@ cd /opt/bluesky-feed
 ```
 
 Before installing dependencies, verify that the host matches the repository's
-exact runtime contract. Stop if the installed patch or native module ABI differs.
+exact runtime contract. Stop if Node, npm, or the native module ABI differs.
 
 ```bash
 test "$(cat .nvmrc)" = "22.23.2"
 test "$(node --version)" = "v22.23.2"
+test "$(npm --version)" = "11.19.1"
 test "$(node -p 'process.versions.modules')" = "127"
 ```
 

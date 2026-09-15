@@ -11,6 +11,8 @@ RUN test "${#SOURCE_REVISION}" -eq 40 && printf '%s\n' "$SOURCE_REVISION" | grep
 
 WORKDIR /app
 
+RUN npm install --global --ignore-scripts npm@11.19.1 && test "$(npm --version)" = "11.19.1"
+
 # Install build dependencies
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates g++ make python3 \
@@ -42,6 +44,8 @@ ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision="$SOURCE_REVISION"
 
 WORKDIR /app
+
+RUN npm install --global --ignore-scripts npm@11.19.1 && test "$(npm --version)" = "11.19.1"
 
 # Set production environment
 ENV NODE_ENV=production

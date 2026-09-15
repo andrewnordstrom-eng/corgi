@@ -1,3 +1,10 @@
+> Latest checkpoint: hosted CodeRabbit requested four changes on `ed3ade2`.
+> All four are repaired locally; npm is now pinned to 11.19.1. Full verify
+> passes 2,284 tests (1 skipped), independent focused QA passes 400, and six
+> controlled harness tests pass. See `review-round1-remediation.json` and its
+> linked reports. New committed-image/hosted acceptance is pending. Earlier
+> sections below retain historical Node22/npm10 and prior-head evidence.
+
 # PROJ-2228 implementation review
 
 Status: published as PR #415; local retained-image rollback passed. CodeQL

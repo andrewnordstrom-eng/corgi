@@ -90,7 +90,7 @@ posts are ranked. This feed exists to:
                                           +------------+
 ```
 
-**Runtime:** Node.js 22.23.2, TypeScript 5, Fastify 5
+**Runtime:** Node.js 22.23.2, npm 11.19.1, TypeScript 5, Fastify 5
 **Data layer:** PostgreSQL 16 (posts, scores, governance, audit), Redis 7 (feed
 cache, sessions)
 **Frontend:** Next.js 15 static export, React 19, Tailwind (public pages,
@@ -473,11 +473,18 @@ See `docs/OPERABILITY.md`, `docs/runbooks/operator-quickstart.md`, and
    must contain a Linear key. Enforcement happens in org-policy / CI checks and
    any local hook configuration that may be installed by the workspace.
 
-3. **Separate install targets.** Backend and frontends have separate
-   `node_modules`. Run `npm install` at repo root and `cd web-next && npm
-   install` for the canonical frontend. Install `web/` dependencies only when
-   working on the legacy compatibility frontend. The `npm run verify` command
-   covers both frontend packages.
+3. **Pinned package manager and separate install targets.** Use npm 11.19.1
+   with Node 22.23.2. Install it into the selected development runtime with
+   `npm install --global --ignore-scripts npm@11.19.1`, then verify `npm --version`
+   before installing project dependencies. CI and both Docker stages perform
+   the same pinned setup. The root, CLI and two web manifests require this npm
+   version; package installs fail on a mismatch with engine-strict enabled.
+   Each workspace has its own `node_modules`; run `npm ci --ignore-scripts` at
+   root, `cli/`, `web/`, and `web-next/` before `npm run verify`.
+   The retained `min-release-age=3` policy filters newly resolved versions by
+   three days. It does not independently age-check every frozen lockfile entry
+   consumed by `npm ci`; reviewed lockfile changes and canonical audits remain
+   required. See [npm configuration](https://docs.npmjs.com/cli/v11/using-npm/config/#min-release-age).
 
 4. **PostgreSQL port offset in production.** Docker Compose binds PostgreSQL to
    `127.0.0.1:5433` (not standard 5432) and Redis to `127.0.0.1:6380` (not

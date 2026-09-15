@@ -1,0 +1,22 @@
+[
+  {
+    "workspace": "root",
+    "exit_code": 0,
+    "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+  },
+  {
+    "workspace": "cli",
+    "exit_code": 0,
+    "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+  },
+  {
+    "workspace": "web",
+    "exit_code": 0,
+    "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+  },
+  {
+    "workspace": "web-next",
+    "exit_code": 0,
+    "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+  }
+]
