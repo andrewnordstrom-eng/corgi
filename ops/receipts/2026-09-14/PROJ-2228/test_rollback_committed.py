@@ -130,8 +130,10 @@ class RollbackHarnessTests(unittest.TestCase):
         self,
         *,
         run_failure: Exception | None,
+        run_stdout: str,
         presence_output: str,
         candidate_image: str,
+        runtime_image_id: str,
         inspected_image: str | None,
         readiness_failure: Exception | None,
         disconnect_failure: Exception | None,
@@ -172,7 +174,7 @@ class RollbackHarnessTests(unittest.TestCase):
             if arguments[:2] == ["run", "-d"]:
                 if run_error is not None:
                     raise run_error
-                return subprocess.CompletedProcess(arguments, 0, "candidate-container\n", "")
+                return subprocess.CompletedProcess(arguments, 0, run_stdout, "")
             if arguments == ["network", "disconnect", MODULE.NETWORK_ID, MODULE.A_NAME]:
                 if disconnect_failure is not None:
                     raise disconnect_failure
@@ -204,7 +206,7 @@ class RollbackHarnessTests(unittest.TestCase):
         def fake_identity(name: str, expected_revision: str) -> dict[str, Any]:
             if name == MODULE.B_NAME:
                 return {"container_id": MODULE.B_CONTAINER_ID, "image_id": MODULE.B_IMAGE_ID, "revision": MODULE.B_REVISION}
-            return {"container_id": identity_container_id, "image_id": candidate_image, "revision": MODULE.A_REVISION}
+            return {"container_id": identity_container_id, "image_id": runtime_image_id, "revision": MODULE.A_REVISION}
 
         def fake_ready(name: str) -> dict[str, Any]:
             if readiness_failure is not None:
@@ -232,8 +234,10 @@ class RollbackHarnessTests(unittest.TestCase):
     def fixture_kwargs(self) -> dict[str, Any]:
         return {
             "run_failure": None,
+            "run_stdout": "candidate-container\n",
             "presence_output": "",
             "candidate_image": "sha256:candidate",
+            "runtime_image_id": "sha256:candidate",
             "inspected_image": None,
             "readiness_failure": None,
             "disconnect_failure": None,
@@ -251,6 +255,65 @@ class RollbackHarnessTests(unittest.TestCase):
         self.assertEqual(receipt["error"]["message"], str(run_error))
         self.assertEqual(receipt["recovery"]["candidate_state"], MODULE.ABSENT)
         self.assertIn(["start", MODULE.B_NAME], calls)
+
+    def test_main_empty_run_stdout_is_unverifiable_and_restores_b(self) -> None:
+        result, receipt, calls = self.run_main_fixture(
+            **{**self.fixture_kwargs(), "run_stdout": ""}
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("no container ID", receipt["error"]["message"])
+        self.assertEqual(receipt["recovery"]["candidate_state"], MODULE.ABSENT)
+        self.assertNotIn(["stop", MODULE.A_NAME], calls)
+        self.assertIn(["start", MODULE.B_NAME], calls)
+
+    def test_main_empty_run_stdout_classifies_present_candidate_safely(self) -> None:
+        cases = (
+            ("candidate-container\n", None, MODULE.OWNED, True),
+            ("candidate-container\n", "sha256:foreign", MODULE.FOREIGN, False),
+            ("candidate-a\ncandidate-b\n", None, MODULE.AMBIGUOUS, False),
+        )
+        for presence, inspected_image, expected_state, may_restore in cases:
+            with self.subTest(presence=presence, inspected_image=inspected_image):
+                result, receipt, calls = self.run_main_fixture(
+                    **{
+                        **self.fixture_kwargs(),
+                        "run_stdout": "   \n",
+                        "presence_output": presence,
+                        "inspected_image": inspected_image,
+                    }
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("no container ID", receipt["error"]["message"])
+                self.assertEqual(receipt["recovery"]["candidate_state"], expected_state)
+                self.assertNotIn(["network", "disconnect", MODULE.NETWORK_ID, MODULE.A_NAME], calls)
+                if may_restore:
+                    self.assertLess(calls.index(["stop", MODULE.A_NAME]), calls.index(["start", MODULE.B_NAME]))
+                else:
+                    self.assertNotIn(["stop", MODULE.A_NAME], calls)
+                    self.assertNotIn(["start", MODULE.B_NAME], calls)
+
+    def test_main_nominal_success_restores_known_good_and_records_pass(self) -> None:
+        result, receipt, calls = self.run_main_fixture(**self.fixture_kwargs())
+        self.assertEqual(result, 0)
+        self.assertEqual(receipt["terminal"], "passed")
+        self.assertEqual(receipt["recovery"]["candidate_state"], MODULE.OWNED)
+        self.assertEqual(receipt["recovery"]["errors"], [])
+        self.assertIn("known_good_restored", receipt["steps"])
+        self.assertLess(calls.index(["stop", MODULE.A_NAME]), calls.index(["start", MODULE.B_NAME]))
+
+    def test_main_rejects_independent_runtime_image_mismatch_before_fault(self) -> None:
+        result, receipt, calls = self.run_main_fixture(
+            **{**self.fixture_kwargs(), "runtime_image_id": "sha256:foreign"}
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            receipt["error"]["message"],
+            "Candidate runtime identity changed before fault injection",
+        )
+        self.assertEqual(receipt["recovery"]["candidate_state"], MODULE.FOREIGN)
+        self.assertNotIn(["network", "disconnect", MODULE.NETWORK_ID, MODULE.A_NAME], calls)
+        self.assertNotIn(["stop", MODULE.A_NAME], calls)
+        self.assertNotIn(["start", MODULE.B_NAME], calls)
 
     def test_main_run_failure_present_expected_stops_candidate_then_restores_b(self) -> None:
         run_error = MODULE.DockerCommandError("Docker operation failed with exit 1: run")

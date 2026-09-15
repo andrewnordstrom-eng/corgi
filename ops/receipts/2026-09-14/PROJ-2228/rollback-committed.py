@@ -138,7 +138,10 @@ def assert_candidate_name_absent() -> None:
 
 
 def run_candidate(run_arguments: list[str]) -> str:
-    return docker(run_arguments, True).stdout.strip()
+    container_id = docker(run_arguments, True).stdout.strip()
+    if not container_id:
+        raise RuntimeError("Candidate docker run returned no container ID")
+    return container_id
 
 
 def exec_text(name: str, arguments: list[str]) -> str:

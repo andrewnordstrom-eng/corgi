@@ -52,7 +52,7 @@ jobs:
         # Examples don't need the full monorepo install — they only depend on
         # the SDK, which is in packages/feed-sdk/ as a workspace. The SDK's
         # dist is built below before each example builds against it.
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build SDK
         run: npm run sdk:build

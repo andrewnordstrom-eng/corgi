@@ -27,6 +27,13 @@ const WORKFLOW_FILES = [
   '.github/workflows/examples-build.yml',
   '.github/workflows/quality-gate.yml',
 ];
+const REQUIRED_NODE_JOBS = new Map([
+  ['.github/workflows/ci.yml', ['docs-verify', 'backend-verify', 'frontend-verify']],
+  ['.github/workflows/deploy.yml', ['validate-target']],
+  ['.github/workflows/docs-freshness.yml', ['docs-freshness']],
+  ['.github/workflows/examples-build.yml', ['build-examples']],
+  ['.github/workflows/quality-gate.yml', ['quality-gate']],
+]);
 const WORKSPACE_MANIFESTS = [
   'packages/feed-sdk/package.json',
   'examples/civility-component/package.json',
@@ -74,7 +81,7 @@ function parseJson(files, relativePath) {
  * mappings fail closed so comments and arbitrary YAML scalars cannot satisfy a
  * runtime command check.
  * @param {string} workflow
- * @returns {Array<{uses: string, run: string, ifCondition: (string|null), shell: (string|null), continueOnError: (string|null)}>}
+ * @returns {Array<{uses: string, run: string, nodeVersion: (string|null), ifCondition: (string|null), shell: (string|null), continueOnError: (string|null)}>}
  */
 function parseWorkflowSteps(workflow) {
   const lines = workflow.split('\n');
@@ -97,6 +104,26 @@ function parseWorkflowSteps(workflow) {
       requireExact(matches.length <= 1, `workflow steps must not duplicate ${field} fields`);
       return matches.length === 1 ? matches[0].slice(`        ${field}:`.length).trim() : null;
     };
+    const withLines = block.filter((line) => /^ {8}with:/.test(line));
+    requireExact(withLines.length <= 1, 'workflow steps must not duplicate with mappings');
+    const withFields = new Map();
+    if (withLines.length === 1) {
+      requireExact(/^ {8}with:\s*$/.test(withLines[0]), 'workflow with fields must use canonical block mappings');
+      const withIndex = block.indexOf(withLines[0]);
+      for (const line of block.slice(withIndex + 1)) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith('#')) continue;
+        const indentation = line.match(/^\s*/)?.[0].length ?? 0;
+        if (indentation < 10) break;
+        if (indentation > 10) continue;
+        const fieldMatch = line.match(/^\s{10}([A-Za-z0-9_-]+):\s*(.*)$/);
+        requireExact(fieldMatch !== null, 'workflow with mappings must use scalar fields');
+        const [, field, rawValue] = fieldMatch;
+        requireExact(!withFields.has(field), `workflow with mappings must not duplicate ${field}`);
+        const value = rawValue.split(/\s+#/, 1)[0].trim();
+        withFields.set(field, value.replace(/^(['"])(.*)\1$/, '$2'));
+      }
+    }
     let run = '';
     if (runLines.length === 1) {
       const runIndex = block.indexOf(runLines[0]);
@@ -122,6 +149,7 @@ function parseWorkflowSteps(workflow) {
     return {
       uses,
       run,
+      nodeVersion: withFields.get('node-version') ?? null,
       ifCondition: readField('if'),
       shell: readField('shell'),
       continueOnError: readField('continue-on-error'),
@@ -135,6 +163,18 @@ function executableRunLines(run) {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'));
+}
+
+/** @param {string} line @returns {boolean} */
+function isExecutableNpmCi(line) {
+  let command = line.trim();
+  if (command.startsWith('(') && command.endsWith(')')) command = command.slice(1, -1).trim();
+  command = command.replace(/^cd\s+(?:cli|web|web-next)\s+&&\s+/, '');
+  if (!command.startsWith('npm ci ')) return false;
+  const flags = command.slice('npm ci '.length).trim().split(/\s+/);
+  const allowedFlags = new Set(['--ignore-scripts', '--no-audit', '--no-fund']);
+  return flags.filter((flag) => flag === '--ignore-scripts').length === 1 &&
+    flags.every((flag) => allowedFlags.has(flag));
 }
 
 /**
@@ -214,7 +254,13 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
     );
     const jobStarts = [...workflow.matchAll(/^  [A-Za-z0-9_-]+:\s*$/gm)].map((match) => match.index ?? 0);
     const jobs = jobStarts.map((start, index) => workflow.slice(start, jobStarts[index + 1] ?? workflow.length));
-    const nodeJobs = jobs.filter((job) => job.includes('uses: actions/setup-node@'));
+    const requiredJobIds = REQUIRED_NODE_JOBS.get(relativePath);
+    requireExact(requiredJobIds !== undefined, `${relativePath} must declare its required Node jobs`);
+    for (const jobId of requiredJobIds) {
+      requireExact(jobs.filter((job) => job.startsWith(`  ${jobId}:\n`)).length === 1, `${relativePath} must contain required Node job ${jobId}`);
+    }
+    const nodeJobs = jobs.filter((job) => job.includes('uses: actions/setup-node@') ||
+      requiredJobIds.some((jobId) => job.startsWith(`  ${jobId}:\n`)));
     requireExact(nodeJobs.length > 0, `${relativePath} must contain setup-node jobs`);
     for (const job of nodeJobs) {
       const steps = parseWorkflowSteps(job);
@@ -236,6 +282,7 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
           JSON.stringify(lines) === JSON.stringify(['set -euo pipefail', 'node scripts/check-runtime-contract.mjs']);
       });
       requireExact(setupSteps.length === 1 && npmSteps.length === 1 && runtimeSteps.length === 1, `${relativePath} each Node job must contain one canonical setup, npm, and runtime step`);
+      requireExact(setupSteps[0].nodeVersion === RUNTIME_VERSION, `${relativePath} setup-node must set node-version to ${RUNTIME_VERSION}`);
       const packageCondition = relativePath === '.github/workflows/quality-gate.yml'
         ? "${{ hashFiles('**/package.json') != '' }}"
         : null;
@@ -250,14 +297,26 @@ export function validateRuntimeSources(files, observedNodeVersion, observedNodeA
       validateCriticalStep(setupSteps[0], 'setup-node', packageCondition);
       validateCriticalStep(npmSteps[0], 'npm bootstrap', packageCondition);
       validateCriticalStep(runtimeSteps[0], 'runtime check', runtimeCondition);
-      const installSteps = steps.filter((step) => executableRunLines(step.run).some((line) => /\bnpm ci\b/.test(line)));
+      const installCandidates = steps.flatMap((step) => executableRunLines(step.run).filter((line) => /\bnpm\s+ci\b/.test(line)));
+      requireExact(installCandidates.every((line) => isExecutableNpmCi(line)), `${relativePath} npm ci commands must be executable and use --ignore-scripts`);
+      const installSteps = steps.filter((step) => executableRunLines(step.run).some((line) => isExecutableNpmCi(line)));
+      const nonInstallingJob = (relativePath === '.github/workflows/docs-freshness.yml' && job.startsWith('  docs-freshness:')) ||
+        (relativePath === '.github/workflows/ci.yml' && job.startsWith('  docs-verify:'));
+      requireExact(nonInstallingJob ? installSteps.length === 0 : installSteps.length > 0, `${relativePath} Node job has an unexpected npm ci install contract`);
+      for (const installStep of installSteps) {
+        validateCriticalStep(installStep, 'npm ci', runtimeCondition);
+        const commands = executableRunLines(installStep.run);
+        const installCommands = commands[0] === 'set -euo pipefail' ? commands.slice(1) : commands;
+        requireExact(installCommands.length > 0 && installCommands.every(isExecutableNpmCi), `${relativePath} npm ci steps must contain only canonical executable install commands`);
+      }
       const setupIndex = steps.indexOf(setupSteps[0]);
       const npmIndex = steps.indexOf(npmSteps[0]);
       const runtimeIndex = steps.indexOf(runtimeSteps[0]);
-      const installIndex = installSteps.length > 0 ? steps.indexOf(installSteps[0]) : runtimeIndex + 1;
+      const installIndex = installSteps.length > 0 ? steps.indexOf(installSteps[0]) : -1;
       requireExact(
         setupSteps.length === 1 && npmSteps.length === 1 && runtimeSteps.length === 1 &&
-          setupIndex >= 0 && npmIndex > setupIndex && runtimeIndex > npmIndex && installIndex > runtimeIndex,
+          setupIndex >= 0 && npmIndex > setupIndex && runtimeIndex > npmIndex &&
+          (nonInstallingJob ? installIndex === -1 : installIndex > runtimeIndex),
         `${relativePath} each Node job must pin npm ${NPM_VERSION} before the runtime check`,
       );
     }

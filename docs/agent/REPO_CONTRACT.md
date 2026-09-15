@@ -90,7 +90,7 @@ posts are ranked. This feed exists to:
                                           +------------+
 ```
 
-**Runtime:** Node.js 22.23.2, npm 11.19.1, TypeScript 5, Fastify 5
+**Runtime:** Node.js 22.23.2, npm 11.19.1, Fastify 5. TypeScript resolves to 6.0.3 for root, web and feed SDK builds, and 5.9.3 for CLI and web-next (respective manifests and lockfiles).
 **Data layer:** PostgreSQL 16 (posts, scores, governance, audit), Redis 7 (feed
 cache, sessions)
 **Frontend:** Next.js 15 static export, React 19, Tailwind (public pages,

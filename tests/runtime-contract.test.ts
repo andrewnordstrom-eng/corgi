@@ -29,6 +29,28 @@ const RUNTIME_DRIFT_CASES: Array<[string, SourceMutation]> = [
   ['workflow runtime disabled', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("        if: ${{ hashFiles('package-lock.json') != '' }}", '        if: false'))],
   ['workflow runtime error suppression', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('        run: node scripts/check-runtime-contract.mjs', '        continue-on-error: true\n        run: node scripts/check-runtime-contract.mjs'))],
   ['workflow runtime custom shell', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('        run: node scripts/check-runtime-contract.mjs', '        shell: echo {0}\n        run: node scripts/check-runtime-contract.mjs'))],
+  ['setup node-version missing', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("          node-version: '22.23.2'", "          # node-version: '22.23.2'"))],
+  ['setup node-version duplicate', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("          node-version: '22.23.2'", "          node-version: '22.23.2'\n          node-version: '22.23.2'"))],
+  ['setup node-version env spoof', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("          node-version: '22.23.2'", "        env:\n          node-version: '22.23.2'"))],
+  ['setup duplicate with mapping', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('        with:\n          node-version:', '        with:\n        with:\n          node-version:'))],
+  ['npm ci echoed', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          echo "npm ci --ignore-scripts"'))],
+  ['npm ci lifecycle scripts enabled', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          npm ci'))],
+  ['npm ci missing', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts\n', ''))],
+  ['npm ci borrowed flag', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          npm ci --ignore-scripts=false'))],
+  ['npm ci contradictory lifecycle flag', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          npm ci --ignore-scripts --ignore-scripts=false'))],
+  ['npm ci uncalled function', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          unused() {\n            npm ci --ignore-scripts\n          }'))],
+  ['npm ci heredoc', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', "          cat <<'EOF'\n          npm ci --ignore-scripts\n          EOF"))],
+  ['npm ci early exit', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          exit 0\n          npm ci --ignore-scripts'))],
+  ['required backend setup removed', (files) => {
+    const workflow = files.get('.github/workflows/ci.yml')!;
+    const start = workflow.indexOf('  backend-verify:');
+    const end = workflow.indexOf('  frontend-verify:');
+    files.set('.github/workflows/ci.yml', workflow.slice(0, start) + workflow.slice(start, end).replace('uses: actions/setup-node@', 'uses: actions/setup-python@') + workflow.slice(end));
+  }],
+  ['npm ci flag borrowed from another command', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('          npm ci --ignore-scripts', '          npm ci; echo --ignore-scripts'))],
+  ['npm ci disabled', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace('      - name: Validate Node install (if package-lock exists)\n        if: ${{ hashFiles(\'package-lock.json\') != \'\' }}', '      - name: Validate Node install (if package-lock exists)\n        if: false'))],
+  ['setup duplicate inline with mapping', (files) => files.set('.github/workflows/quality-gate.yml', files.get('.github/workflows/quality-gate.yml')!.replace("          node-version: '22.23.2'", "          node-version: '22.23.2'\n        with: {}"))],
+  ['spoofed docs-only job exception', (files) => files.set('.github/workflows/ci.yml', files.get('.github/workflows/ci.yml')!.replace('  docs-verify:', '  docs-fake:').replace('    name: docs-verify', '    name: docs-fake'))],
   ['Docker workspace manifest', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replace('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', ''))],
   ['Docker workspace manifest wildcard lookalike', (files) => files.set('Dockerfile', files.get('Dockerfile')!.replaceAll('COPY packages/feed-sdk/package.json ./packages/feed-sdk/package.json', 'COPY packages/feed-sdk/packageXjson x/packages/feed-sdk/packageXjson'))],
   ['Docker npmrc stage placement', (files) => {
