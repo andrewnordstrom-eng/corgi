@@ -1,0 +1,52 @@
+{
+  "root": {
+    "exit_code": 1,
+    "advisory_ids": [
+      "GHSA-vwc7-r8mq-g2x9"
+    ],
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 0,
+      "critical": 0,
+      "total": 3
+    }
+  },
+  "cli": {
+    "exit_code": 0,
+    "advisory_ids": [],
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "web": {
+    "exit_code": 0,
+    "advisory_ids": [],
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "web-next": {
+    "exit_code": 0,
+    "advisory_ids": [],
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  }
+}

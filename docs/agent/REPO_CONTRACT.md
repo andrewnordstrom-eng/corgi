@@ -4,7 +4,7 @@ Status: canonical repo contract
 Owner: bluesky-feed
 Service class: production_service
 Contract version: 2
-Last updated: 2026-09-09
+Last updated: 2026-09-14
 Last verified: not yet rehearsed for the 2026-08-02 workflow revision
 
 > Canonical reference for any human or tooling operating in this repo.

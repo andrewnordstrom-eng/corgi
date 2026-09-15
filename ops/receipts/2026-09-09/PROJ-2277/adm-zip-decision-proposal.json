@@ -1,5 +1,7 @@
 {
-  "status": "proposal-only-not-approved-not-active",
+  "status": "superseded-without-activation",
+  "superseded_at": "2026-09-14",
+  "superseding_evidence": "PR #412 merged adm-zip 0.6.1 in main c9833d1ca1e7114212eabd7510c3b469ddd0b6cb. All four canonical full-graph audits passed on the integrated candidate on September 14. No exception was approved or activated. The remaining fields preserve the September 9 proposal as historical evidence.",
   "advisory": "GHSA-vwc7-r8mq-g2x9",
   "package": "adm-zip",
   "locked_version": "0.6.0",

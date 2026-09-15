@@ -388,12 +388,7 @@ describe('production deploy ordering guards', () => {
     const ci = readFileSync(CI_FILE, 'utf8');
 
     expect(() => assertPackagedDependencyAuditContract(deploy)).not.toThrow();
-    for (const workspace of ['root', 'cli', 'web', 'web-next']) {
-      const script = workspace === 'root' ? 'scripts' : '../scripts';
-      expect(ci).toContain(
-        `run: node ${script}/audit-allowlist.mjs --workspace=${workspace} --audit-level=moderate`
-      );
-    }
+    expect(() => assertCiDependencyAuditContract(ci)).not.toThrow();
   });
 
   it.each(['root', 'cli', 'web', 'web-next'])(
@@ -431,6 +426,26 @@ describe('production deploy ordering guards', () => {
     );
   });
 
+  it.each([
+    ['backend-verify', 'if: false'],
+    ['backend-verify', 'continue-on-error: true'],
+    ['frontend-verify', 'if: false'],
+    ['frontend-verify', 'continue-on-error: true'],
+  ])('rejects a late CI job guard: %s / %s', (job, configuration) => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const marker = `  ${job}:\n`;
+    const jobStart = ci.indexOf(marker);
+    const nextJobOffset = ci.slice(jobStart + marker.length).search(/\n  [^\s][^\n]*:\n/);
+    const jobEnd = nextJobOffset < 0 ? ci.length : jobStart + marker.length + nextJobOffset;
+    const mutated =
+      ci.slice(0, jobEnd) + `\n    ${configuration}` + ci.slice(jobEnd);
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI audit jobs must remain enabled and fail-closed'
+    );
+  });
+
   it.each(['continue-on-error: true', 'if: false', 'env:\n          NODE_ENV: production'])(
     'rejects an audit step weakened through %s',
     (configuration) => {
@@ -459,6 +474,126 @@ describe('production deploy ordering guards', () => {
     expect(mutated).not.toBe(deploy);
     expect(() => assertPackagedDependencyAuditContract(mutated)).toThrow(
       'Dependency audits must run after installation and before packaging'
+    );
+  });
+
+  it.each([
+    ['root', 'node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate'],
+    ['cli', 'node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate'],
+    ['web', 'node ../scripts/audit-allowlist.mjs --workspace=web --audit-level=moderate'],
+    [
+      'web-next',
+      'node ../scripts/audit-allowlist.mjs --workspace=web-next --audit-level=moderate',
+    ],
+  ])('rejects a missing or weakened CI audit for %s', (workspace, command) => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const mutated = ci.replace(command, command.replace('node ', '# node '));
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI must run the complete fail-closed audit policy for every packaged workspace'
+    );
+  });
+
+  it.each(['if: false', 'continue-on-error: true'])(
+    'rejects a disabled CI audit step: %s',
+    (configuration) => {
+      const ci = readFileSync(CI_FILE, 'utf8');
+      const marker = '      - name: Security audit (backend)\n';
+      const mutated = ci.replace(marker, `${marker}        ${configuration}\n`);
+
+      expect(mutated).not.toBe(ci);
+      expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+        'CI must run the complete fail-closed audit policy for every packaged workspace'
+      );
+    }
+  );
+
+  it.each([
+    ['backend-verify', 'if: false'],
+    ['backend-verify', 'if: ${{ false }}'],
+    ['backend-verify', 'if: 0'],
+    ['frontend-verify', 'if: null'],
+    ['frontend-verify', 'if: false'],
+    ['frontend-verify', 'if: ${{ false }}'],
+    ['backend-verify', 'continue-on-error: true'],
+    ['frontend-verify', 'continue-on-error: true'],
+    ['backend-verify', 'continue-on-error: ${{ true }}'],
+  ])('rejects a disabled or suppressing CI audit job: %s / %s', (job, configuration) => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const marker = `  ${job}:\n`;
+    const mutated = ci.replace(marker, `${marker}    ${configuration}\n`);
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI audit jobs must remain enabled and fail-closed'
+    );
+  });
+
+  it('permits an explicit literal false for CI job continue-on-error', () => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const marker = '  backend-verify:\n';
+    const mutated = ci.replace(marker, `${marker}    continue-on-error: false\n`);
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).not.toThrow();
+  });
+
+  it.each([
+    'npm audit --omit=dev --audit-level=moderate',
+    'node scripts/audit-allowlist.mjs --workspace=root --audit-level=high',
+    'node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate || true',
+    'NODE_ENV=production node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+  ])('rejects a weakened root CI audit: %s', (command) => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const mutated = ci.replace(
+      'node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+      command
+    );
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI must run the complete fail-closed audit policy for every packaged workspace'
+    );
+  });
+
+  it('rejects a CI audit moved before its workspace installation', () => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const marker = '      - name: Security audit (backend)\n';
+    const start = ci.indexOf(marker);
+    const end = ci.indexOf('\n      - name:', start + marker.length);
+    const auditSteps = ci.slice(start, end);
+    const withoutAudits = ci.slice(0, start) + ci.slice(end);
+    const installMarker = '      - name: Install backend dependencies\n';
+    const installStart = withoutAudits.indexOf(installMarker);
+    const mutated =
+      withoutAudits.slice(0, installStart) + auditSteps + '\n' + withoutAudits.slice(installStart);
+
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI dependency audits must run after their workspace installations'
+    );
+  });
+
+  it('rejects backend audit steps moved into a later CI job', () => {
+    const ci = readFileSync(CI_FILE, 'utf8');
+    const backendStart = ci.indexOf('  backend-verify:\n');
+    const frontendStart = ci.indexOf('  frontend-verify:\n');
+    const auditStart = ci.indexOf('      - name: Security audit (backend)\n');
+    const auditSteps = ci.slice(auditStart, frontendStart);
+    const withoutAudits = ci.slice(0, auditStart) + ci.slice(frontendStart);
+    const frontendAuditStart = withoutAudits.indexOf('      - name: Security audit (frontend)\n');
+    const mutated =
+      withoutAudits.slice(0, frontendAuditStart) +
+      auditSteps +
+      withoutAudits.slice(frontendAuditStart);
+
+    expect(backendStart).toBeGreaterThanOrEqual(0);
+    expect(frontendStart).toBeGreaterThan(auditStart);
+    expect(frontendAuditStart).toBeGreaterThan(withoutAudits.indexOf('  frontend-verify:\n'));
+    expect(mutated).not.toBe(ci);
+    expect(() => assertCiDependencyAuditContract(mutated)).toThrow(
+      'CI must run the complete fail-closed audit policy for every packaged workspace'
     );
   });
 
@@ -3727,6 +3862,103 @@ function assertPackagedDependencyAuditContract(workflow: string): void {
   const packageStart = workflow.indexOf('      - name: Package verified runtime artifacts\n');
   if (installStart < 0 || start <= installStart || packageStart <= end) {
     throw new Error('Dependency audits must run after installation and before packaging');
+  }
+}
+
+function assertCiDependencyAuditContract(workflow: string): void {
+  const expectedSteps = [
+    {
+      jobMarker: '  backend-verify:\n',
+      marker: '      - name: Security audit (backend)\n',
+      installMarker: '      - name: Install backend dependencies\n',
+      block: [
+        '      - name: Security audit (backend)',
+        '        run: node scripts/audit-allowlist.mjs --workspace=root --audit-level=moderate',
+      ].join('\n'),
+    },
+    {
+      jobMarker: '  backend-verify:\n',
+      marker: '      - name: Security audit (CLI)\n',
+      installMarker: '      - name: Install CLI dependencies\n',
+      block: [
+        '      - name: Security audit (CLI)',
+        '        working-directory: cli',
+        '        run: node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate',
+      ].join('\n'),
+    },
+    {
+      jobMarker: '  frontend-verify:\n',
+      marker: '      - name: Security audit (frontend)\n',
+      installMarker: '      - name: Install frontend dependencies\n',
+      block: [
+        '      - name: Security audit (frontend)',
+        '        working-directory: web',
+        '        run: node ../scripts/audit-allowlist.mjs --workspace=web --audit-level=moderate',
+      ].join('\n'),
+    },
+    {
+      jobMarker: '  frontend-verify:\n',
+      marker: '      - name: Security audit (Next.js frontend)\n',
+      installMarker: '      - name: Install Next.js frontend dependencies\n',
+      block: [
+        '      - name: Security audit (Next.js frontend)',
+        '        working-directory: web-next',
+        '        run: node ../scripts/audit-allowlist.mjs --workspace=web-next --audit-level=moderate',
+      ].join('\n'),
+    },
+  ];
+  const previousAuditStartByJob = new Map<string, number>();
+  for (const step of expectedSteps) {
+    const start = workflow.indexOf(step.marker);
+    const contentStart = start + step.marker.length;
+    const nextStepOffset = workflow.indexOf('\n      - name:', contentStart);
+    const nextJobOffset = workflow.slice(contentStart).search(/\n  [^\s][^\n]*:\n/);
+    const nextJob = nextJobOffset < 0 ? -1 : contentStart + nextJobOffset;
+    const endCandidates = [nextStepOffset, nextJob].filter((index) => index >= 0);
+    const end = endCandidates.length > 0 ? Math.min(...endCandidates) : -1;
+    const installStart = workflow.indexOf(step.installMarker);
+    const jobStart = workflow.indexOf(step.jobMarker);
+    const jobEndOffset =
+      jobStart < 0
+        ? -1
+        : workflow.slice(jobStart + step.jobMarker.length).search(/\n  [^\s][^\n]*:\n/);
+    const jobEnd =
+      jobEndOffset < 0 ? workflow.length : jobStart + step.jobMarker.length + jobEndOffset;
+    const jobBody = workflow.slice(jobStart, jobEnd);
+    const previousAuditStart = previousAuditStartByJob.get(step.jobMarker) ?? -1;
+    const continueOnErrorPrefix = '    continue-on-error:';
+    const hasUnsafeJobGuard = jobBody.split('\n').some((line) => {
+      if (line.startsWith('    if:')) return true;
+      return (
+        line.startsWith(continueOnErrorPrefix) &&
+        line.slice(continueOnErrorPrefix.length).trim() !== 'false'
+      );
+    });
+    if (hasUnsafeJobGuard) {
+      throw new Error('CI audit jobs must remain enabled and fail-closed');
+    }
+    if (
+      start < 0 ||
+      end < start ||
+      installStart < 0 ||
+      jobStart < 0 ||
+      start >= jobEnd ||
+      end > jobEnd ||
+      jobStart >= installStart ||
+      installStart >= jobEnd ||
+      start < jobStart ||
+      start <= installStart ||
+      start <= previousAuditStart ||
+      workflow.slice(start, end).trimEnd() !== step.block
+    ) {
+      if (start >= 0 && installStart >= 0 && start <= installStart) {
+        throw new Error('CI dependency audits must run after their workspace installations');
+      }
+      throw new Error(
+        'CI must run the complete fail-closed audit policy for every packaged workspace'
+      );
+    }
+    previousAuditStartByJob.set(step.jobMarker, start);
   }
 }
 

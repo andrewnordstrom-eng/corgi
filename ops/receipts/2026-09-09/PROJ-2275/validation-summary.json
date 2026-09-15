@@ -1,0 +1,79 @@
+{
+  "base_sha": "a09edeafaf085121d1340a543874de6362e1e42a",
+  "candidate_files_sha256": {
+    "package.json": "2746b528154e008cdf9cda1ef49cde0cbecb7e8928a232113976bbd428093147",
+    "package-lock.json": "ee25fee8857ec558649882c6a1795a566a817bd3a2dadcf1630e0992f35bfde3",
+    "web-next/package.json": "d1b101d650480d534f54abecdfd2de4b526ea24d1d2ec1cf0078567605ac55f4",
+    "web-next/package-lock.json": "2610921b172ef5e7bcf97313370811aa0844ef2b2456a56d01e69c38094ee576"
+  },
+  "validation_logs_sha256": {
+    "ci-root-final": "9011fef98e0d979b17f414c0135c42ae58230ba0641c6a9dc009ff9600db22c4",
+    "ci-cli": "c6fda49224edd7403adcb8aa78dbd7e14abadef60878165b651e7969ae667b3f",
+    "ci-web": "e449b714948573bfbea7d1fd1b87cb7b65fd7e6a8e882e6bd539e2496dd44ea2",
+    "ci-web-next-final": "e15136963aef3f26ed153eda9cc5b9cecaea98507a5a76083e684aa0ebe63793",
+    "audit-root-final": "cea12fc99bd37d41a14dfd7ec4b45abcb53b369b87872c7707920ddf8f195472",
+    "audit-cli": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf",
+    "audit-web": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf",
+    "audit-web-next-final": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf",
+    "verify-final": "610cd7333b81c97683f5dfb80da6e8f9c409e1904c289fbdf3fef08ebefb3557",
+    "native-smoke": "a00bf33893996f3bd2433e2bc36152e50186ed9213f6bcc32a3db37b64db9164"
+  },
+  "runtime": {
+    "node": "v20.20.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "rootSharp": "0.35.4",
+    "webSharp": "0.35.4",
+    "libvips": "8.18.6",
+    "pngBytes": 94,
+    "pixelRoundTrip": "pass",
+    "onnxNativeLoad": "pass",
+    "transformersImport": "pass"
+  },
+  "tests": {
+    "passed": 2257,
+    "skipped": 1,
+    "files_passed": 159
+  },
+  "verify_exit_code": 0,
+  "canonical_audits": {
+    "root": {
+      "exit_code": 1,
+      "remaining_advisory_ids": [
+        "GHSA-vwc7-r8mq-g2x9"
+      ]
+    },
+    "cli": {
+      "exit_code": 0
+    },
+    "web": {
+      "exit_code": 0
+    },
+    "web-next": {
+      "exit_code": 0
+    }
+  },
+  "clean_installs": {
+    "root": true,
+    "cli": true,
+    "web": true,
+    "web-next": true
+  },
+  "linux_runtime_verified": false,
+  "hosted_review_verified": false,
+  "production_changed": false,
+  "coderabbit_cli_review": {
+    "status": "review_completed",
+    "findings": 0,
+    "exit_code": 0,
+    "reviewed_files": [
+      "package-lock.json",
+      "package.json",
+      "web-next/package-lock.json",
+      "web-next/package.json"
+    ],
+    "log_sha256": "8ce83a4c0199be66bcc2d3a19d28c3a1dd3d6ca3bb828736ac9d82ff43f5a905"
+  },
+  "lease_validation": "pass",
+  "tracked_scope_validation": "pass"
+}
