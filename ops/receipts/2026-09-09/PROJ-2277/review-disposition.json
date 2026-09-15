@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "command": "coderabbit review --agent --uncommitted",
+  "exit_code": 0,
+  "reviewed_patch_sha256": "8bdacdf3573c5fb1220d8d7ce79e48573b464158dd1ea6da340ef9a0e8288906",
+  "reviewed_files": [
+    ".github/workflows/deploy.yml",
+    "docs/agent/REPO_CONTRACT.md",
+    "tests/demo-shadow-isolation.test.ts"
+  ],
+  "review_log_sha256": "4de7af4a19f234157fcef6394cc0500c4e2d82911a166706197e57aa6ee9a75f",
+  "findings": [
+    {
+      "severity": "trivial",
+      "file": "tests/demo-shadow-isolation.test.ts",
+      "line": 391,
+      "summary": "Strengthen CI command assertions to reject commented or disabled steps and environment-based omissions.",
+      "disposition": "deferred",
+      "reason": "Useful future CI-policy test hardening, not a demonstrated defect in the current workflow. The unchanged CI steps at .github/workflows/ci.yml:77-82 and :152-158 were personally inspected: executable moderate-threshold wrapper calls in their correct directories, without failure suppression or dev omission. The changed promotion step already has negative cases for omissions, suppression and ordering. A generalized CI validator is outside this bounded repair."
+    }
+  ],
+  "blocking_findings": 0,
+  "claim_limit": "External CLI review of the three implementation files only. Validation receipts were prepared locally and were not part of this export. This is not hosted exact-head approval or release approval."
+}
