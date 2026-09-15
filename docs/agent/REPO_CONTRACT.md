@@ -321,12 +321,12 @@ npm run cli -- --help
 
 ### Docker deploy (not M0-compatible)
 
-The generic image does not yet stamp an immutable reviewed release SHA, so
-its health response reports `revision: null` even though dependency readiness
-can pass. The exact-SHA workflow rejects that missing identity, so do not use
-this path for M0 production promotion. Container release stamping, immutable
-image pinning, and container-level identity evidence belong to the later
-runtime-hardening release.
+The generic image requires a full lowercase `SOURCE_REVISION`, records it in
+`dist/.release-sha` and the OCI revision label, and pins its Node base image by
+digest. `/health` reports that stamped revision. These checks establish artifact
+identity; they do not establish review approval or qualify this standalone Docker
+path for M0 production promotion. Protected-host adoption and rollout still
+require the separately approved release workflow and its acceptance evidence.
 
 The process-liveness contract is deliberately separate from rollout readiness:
 `/health/live` stays available while the process runs, and the systemd watchdog
@@ -339,7 +339,7 @@ emergency disk pressure. Stale ingestion therefore blocks promotion without
 forcing a watchdog restart loop.
 
 ```bash
-docker build -t bluesky-feed .
+docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t bluesky-feed .
 docker run -d --name bluesky-feed --env-file .env -p 3000:3000 bluesky-feed
 ```
 

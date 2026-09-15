@@ -1,0 +1,32 @@
+{
+  "source_revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+  "image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72",
+  "architecture": "arm64",
+  "os": "linux",
+  "oci_revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+  "native_probe": {
+    "node": "v22.23.2",
+    "abi": "127",
+    "uid": 1001,
+    "revision": "c880755d234d15d1df290cecea0ac0d3315e9571"
+  },
+  "migrations": 34,
+  "smoke": {
+    "container": "ac4fa11f2c4284f30086eb585bbd79cdd2366925b6f5e296c40022a22666b4ef",
+    "image": "corgi-2228:committed-b",
+    "expected_revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+    "readiness": {
+      "status": 200,
+      "body": {
+        "status": "ready"
+      }
+    },
+    "health": {
+      "status": "degraded",
+      "revision": "c880755d234d15d1df290cecea0ac0d3315e9571"
+    },
+    "live_ingestion_qualified": false
+  },
+  "build_log_sha256": "e86bfb06e2a7b4464b18d3897bc811f5179542a282ae959c4871565d1ddfe6c0",
+  "production_qualified": false
+}

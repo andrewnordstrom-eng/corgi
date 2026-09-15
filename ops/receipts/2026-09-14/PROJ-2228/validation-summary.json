@@ -1,8 +1,8 @@
 {
   "recorded_at": "2026-09-15T03:18:19.733886+00:00",
-  "status": "LOCAL_IMPLEMENTATION_VALIDATED_REVIEW_FINDINGS_RESOLVED",
+  "status": "COMMITTED_IMAGE_VALIDATED_HOSTED_AND_ROLLBACK_PENDING",
   "base_sha": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
-  "committed_candidate_sha": null,
+  "committed_candidate_sha": "c880755d234d15d1df290cecea0ac0d3315e9571",
   "node": "22.23.2",
   "npm": "10.9.8",
   "abi": "127",
@@ -122,9 +122,9 @@
     "report": "reviewed-candidate-qa.md"
   },
   "pending": [
-    "commit and PR creation",
-    "exact-head hosted Linux/amd64 checks",
-    "final commit-bound image and retained-artifact rollback rehearsal"
+    "PR creation",
+    "exact-head hosted Linux/amd64 checks and review",
+    "retained-artifact rollback rehearsal"
   ],
   "excluded": [
     "merge",

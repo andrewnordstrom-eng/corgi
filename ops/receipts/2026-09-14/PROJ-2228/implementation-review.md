@@ -1,7 +1,7 @@
 # PROJ-2228 implementation review
 
-Status: implementation and local verification complete; commit,
-PR, hosted checks, and final commit-bound rollback acceptance are pending.
+Status: implementation committed and local verification complete; PR, hosted
+checks, and final commit-bound rollback acceptance are pending.
 This packet is not Done and is not a production release approval.
 
 ## Decision-changing findings
@@ -109,11 +109,14 @@ scan is claimed from native module loading or npm audits.
 
 ## Live Acceptance
 
-**[verified]** No final commit SHA exists at this precommit checkpoint. Local images use the base revision as a provisional stamp;
-their immutable image IDs bind the tested bytes, but they are not claimed as
-final exact-head artifacts. A retained-artifact rollback between committed
-candidate revisions remains pending. Redis outage/recovery is not substituted
-for that rollback rehearsal.
+**[verified — personal execution]** Commit
+`c880755d234d15d1df290cecea0ac0d3315e9571` produced Linux/arm64 image
+`sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72`.
+Its stamp, OCI label, native modules, UID, ABI, 34 migrations and HTTP 200 readiness
+passed; see `committed-b-acceptance.json`. Earlier image receipts retain their
+provisional base-SHA stamps and are historical evidence only. The first migration
+attempt hit the disposable PostgreSQL initialization race; verifying TCP readiness
+before rerunning resolved it. The retained-artifact rollback rehearsal is pending.
 
 The isolated application deliberately has no live Jetstream feed; `/health`
 reports degraded while dependency-only `/health/ready` returns 200. No production
