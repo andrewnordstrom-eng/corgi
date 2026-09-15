@@ -1,0 +1,225 @@
+{
+  "recorded_at": "2026-09-15T03:18:19.733886+00:00",
+  "status": "COMMITTED_IMAGE_VALIDATED_HOSTED_AND_ROLLBACK_PENDING",
+  "base_sha": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
+  "committed_candidate_sha": "c880755d234d15d1df290cecea0ac0d3315e9571",
+  "node": "22.23.2",
+  "npm": "10.9.8",
+  "abi": "127",
+  "personal_execution": {
+    "full_verify": {
+      "exit_code": 0,
+      "test_files_passed": 160,
+      "tests_passed": 2271,
+      "tests_skipped": 1
+    },
+    "clean_installs": {
+      "root": {
+        "workspace": "root",
+        "command": "npm ci --ignore-scripts",
+        "exit_code": 0,
+        "started_at": "2026-09-15T02:58:06.622072+00:00",
+        "finished_at": "2026-09-15T02:58:25.100181+00:00",
+        "log_sha256": "e6b8c1b63f992703ee0e3d5472939335a4d2118c8f2612fada36dabaa65918b8",
+        "EBADENGINE_count": 0,
+        "node": "22.23.2",
+        "npm": "10.9.8"
+      },
+      "cli": {
+        "workspace": "cli",
+        "command": "npm ci --ignore-scripts",
+        "exit_code": 0,
+        "started_at": "2026-09-15T02:58:06.622255+00:00",
+        "finished_at": "2026-09-15T02:58:08.622544+00:00",
+        "log_sha256": "3ffadecc440a67f28682535aa7f20e533fcb82b3c399c5bacd73db001e41a0ce",
+        "EBADENGINE_count": 0,
+        "node": "22.23.2",
+        "npm": "10.9.8"
+      },
+      "web": {
+        "workspace": "web",
+        "command": "npm ci --ignore-scripts",
+        "exit_code": 0,
+        "started_at": "2026-09-15T02:58:06.623660+00:00",
+        "finished_at": "2026-09-15T02:58:11.741908+00:00",
+        "log_sha256": "c0a5439c667f3c75fac85ae4959eadb393298475e1a31ef3c98401839e8c1cb5",
+        "EBADENGINE_count": 0,
+        "node": "22.23.2",
+        "npm": "10.9.8"
+      },
+      "web-next": {
+        "workspace": "web-next",
+        "command": "npm ci --ignore-scripts",
+        "exit_code": 0,
+        "started_at": "2026-09-15T02:58:06.623964+00:00",
+        "finished_at": "2026-09-15T02:58:27.159813+00:00",
+        "log_sha256": "b63b9676c5dd84516eac2a4f630951ad1488a9a58e7d82e0d247e5451a932337",
+        "EBADENGINE_count": 0,
+        "node": "22.23.2",
+        "npm": "10.9.8"
+      }
+    },
+    "canonical_moderate_audits": {
+      "root": {
+        "workspace": "root",
+        "command": [
+          "node",
+          "/private/tmp/proj-2228-corgi-runtime/scripts/audit-allowlist.mjs",
+          "--workspace=root",
+          "--audit-level=moderate"
+        ],
+        "exit_code": 0,
+        "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+      },
+      "cli": {
+        "workspace": "cli",
+        "command": [
+          "node",
+          "/private/tmp/proj-2228-corgi-runtime/scripts/audit-allowlist.mjs",
+          "--workspace=cli",
+          "--audit-level=moderate"
+        ],
+        "exit_code": 0,
+        "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+      },
+      "web": {
+        "workspace": "web",
+        "command": [
+          "node",
+          "/private/tmp/proj-2228-corgi-runtime/scripts/audit-allowlist.mjs",
+          "--workspace=web",
+          "--audit-level=moderate"
+        ],
+        "exit_code": 0,
+        "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+      },
+      "web-next": {
+        "workspace": "web-next",
+        "command": [
+          "node",
+          "/private/tmp/proj-2228-corgi-runtime/scripts/audit-allowlist.mjs",
+          "--workspace=web-next",
+          "--audit-level=moderate"
+        ],
+        "exit_code": 0,
+        "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+      }
+    },
+    "linux_arm64_image_id": "sha256:fd64bd19a09e70217dbee621394b49eef73ff9d55e2541acf2be48119a8c4412",
+    "native_modules": [
+      "onnxruntime-node",
+      "sharp"
+    ],
+    "uid": 1001,
+    "migration_count": 34,
+    "readiness_http_status": 200,
+    "linux_amd64": "blocked locally: exec /bin/sh: exec format error",
+    "installed_tree_exit_code": 1,
+    "lock_tree_exit_code": 0
+  },
+  "independent_qa_report": {
+    "tests_passed": 387,
+    "report": "reviewed-candidate-qa.md"
+  },
+  "pending": [
+    "PR creation",
+    "exact-head hosted Linux/amd64 checks and review",
+    "retained-artifact rollback rehearsal"
+  ],
+  "excluded": [
+    "merge",
+    "deployment",
+    "credentials",
+    "freeze changes"
+  ],
+  "log_evidence": {
+    "full-verify-source-final.log": {
+      "path": "/private/tmp/corgi-2228-validation/full-verify-source-final.log",
+      "sha256": "5ef3fc22dbfae76fdfd4afa82a29304fa96acf4c20b9d4a7f28bc73b736bf596"
+    },
+    "qa-focused.log": {
+      "path": "/private/tmp/corgi-2228-validation/qa-focused.log",
+      "sha256": "f35a737f35ce549efd7ee0536b79d7931623a68b98ceac0e8caa9f54c0ad8ff2"
+    },
+    "runtime-final.log": {
+      "path": "/private/tmp/corgi-2228-validation/runtime-final.log",
+      "sha256": "e5e072108ab804483849b8902aca18618618ad144f0ba3defe23d0fe25d69fca"
+    },
+    "docker-build-final.log": {
+      "path": "/private/tmp/corgi-2228-validation/docker-build-final.log",
+      "sha256": "a0d25fb0e201e1ca07580e2b4bfac9085dd1a236f15a198f08d0c4cce2acbe96"
+    },
+    "docker-build-amd64.log": {
+      "path": "/private/tmp/corgi-2228-validation/docker-build-amd64.log",
+      "sha256": "5cce5b3e9e1964770c62d4f468d3d008efd56450b168f3dfea868b57d28ccc83"
+    },
+    "image-native-probe.log": {
+      "path": "/private/tmp/corgi-2228-validation/image-native-probe.log",
+      "sha256": "d22836f1f6c3ccc07db281faaaac52239c4cb1e423816510004f226a3badfc40"
+    },
+    "smoke-migrations.log": {
+      "path": "/private/tmp/corgi-2228-validation/smoke-migrations.log",
+      "sha256": "066daec1272aef3791bbe2d2ea9b1fc972a851a50ea8e69abb6356b8749af185"
+    },
+    "installed-tree.json": {
+      "path": "/private/tmp/corgi-2228-validation/installed-tree.json",
+      "sha256": "2ddcd9c925cae444df57a7e940407e651990dfc7abb1d2855094fc9a2c7672a7"
+    },
+    "lock-tree.json": {
+      "path": "/private/tmp/corgi-2228-validation/lock-tree.json",
+      "sha256": "2858daa3b9bb138dbc282f9943991d3bd55b89364f624e646f42e3524ed19256"
+    },
+    "installed-tree.stderr": {
+      "path": "/private/tmp/corgi-2228-validation/installed-tree.stderr",
+      "sha256": "489821804694e7175bcfb1a7d3ae24a4a4d503dc6acf349c60b5005720eca778"
+    },
+    "root-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/root-install.log",
+      "sha256": "e6b8c1b63f992703ee0e3d5472939335a4d2118c8f2612fada36dabaa65918b8"
+    },
+    "root-audit.log": {
+      "path": "/private/tmp/corgi-2228-validation/root-audit.log",
+      "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    "cli-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/cli-install.log",
+      "sha256": "3ffadecc440a67f28682535aa7f20e533fcb82b3c399c5bacd73db001e41a0ce"
+    },
+    "cli-audit.log": {
+      "path": "/private/tmp/corgi-2228-validation/cli-audit.log",
+      "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    "web-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/web-install.log",
+      "sha256": "c0a5439c667f3c75fac85ae4959eadb393298475e1a31ef3c98401839e8c1cb5"
+    },
+    "web-audit.log": {
+      "path": "/private/tmp/corgi-2228-validation/web-audit.log",
+      "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    "web-next-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/web-next-install.log",
+      "sha256": "b63b9676c5dd84516eac2a4f630951ad1488a9a58e7d82e0d247e5451a932337"
+    },
+    "web-next-audit.log": {
+      "path": "/private/tmp/corgi-2228-validation/web-next-audit.log",
+      "sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    "coderabbit-approved-review.log": {
+      "path": "/private/tmp/corgi-2228-validation/coderabbit-approved-review.log",
+      "sha256": "31241b99d04792c8c2db64762c59891d58a4f244257ece9f338cb7357b2ad1bb"
+    },
+    "full-verify-review-fixed.log": {
+      "path": "/private/tmp/corgi-2228-validation/full-verify-review-fixed.log",
+      "sha256": "5d66e0ea23680682f486b64f87c3fa7d89e357282bd2590fddc85fdb6b5dce58"
+    },
+    "docs-runtime-install.log": {
+      "path": "/private/tmp/corgi-2228-validation/docs-runtime-install.log",
+      "sha256": "f579c4540f6cbe4c3bfffff8cb3b048eca953a1bb3e7957ac54044b495718600"
+    },
+    "qa-reviewed-focused.log": {
+      "path": "/private/tmp/corgi-2228-validation/qa-reviewed-focused.log",
+      "sha256": "df9130da7f7baf3e4b6be84f6696249bf6b6282e55f4cb598d5783ee36ed0ebf"
+    }
+  }
+}

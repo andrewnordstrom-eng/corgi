@@ -1619,6 +1619,8 @@ describe('production exact-SHA promotion guards', () => {
     { command: 'npm --prefix web install --ignore-scripts', valid: false },
     { command: 'npm --prefix web add package-name --ignore-scripts', valid: false },
     { command: 'npm ci --ignore-scripts=false', valid: false },
+    { command: 'npm ci; printf --ignore-scripts', valid: false },
+    { command: 'NPM=npm; $NPM ci --ignore-scripts', valid: false },
   ])('validates lifecycle safety with npm global flags: $command', ({ command, valid }) => {
     const assertion = () => assertLifecycleScriptContract(command, '');
 
@@ -1627,6 +1629,35 @@ describe('production exact-SHA promotion guards', () => {
     } else {
       expect(assertion).toThrow('Deployment install must disable lifecycle scripts');
     }
+  });
+
+  it('allows only the exact pinned package-manager bootstrap on the runner', () => {
+    const command = 'npm install --global --ignore-scripts npm@11.19.1';
+    expect(() => assertLifecycleScriptContract(command, '')).not.toThrow();
+    expect(() => assertLifecycleScriptContract('', command)).toThrow('Deployment install must disable lifecycle scripts');
+  });
+
+  it.each([
+    { region: 'runner', command: 'NPM=npm; $NPM install https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+    { region: 'remote', command: 'NPM=npm; $NPM install https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+    { region: 'runner', command: 'NPM=npm; "${NPM}" i https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+    { region: 'remote', command: 'NPM=npm; "$NPM" --prefix web i https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+    { region: 'runner', command: 'NPM=npm; ${NPM} add https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+    { region: 'remote', command: 'NPM=npm; "${NPM:-npm}" add https://registry.npmjs.org/example/-/example-1.0.0.tgz' },
+  ])('rejects variable-indirected package installs in $region: $command', ({ region, command }) => {
+    const runner = region === 'runner' ? command : '';
+    const remote = region === 'remote' ? command : '';
+    expect(() => assertLifecycleScriptContract(runner, remote)).toThrow('Deployment install must disable lifecycle scripts');
+  });
+
+  it.each([
+    'npm install --global npm@11.19.1',
+    'npm install --global --ignore-scripts npm@latest',
+    'npm install --global --ignore-scripts npm@11.19.1 other-package',
+    'npm install --global --ignore-scripts npm@11.19.1 --ignore-scripts=false',
+    'npm --prefix /tmp/other install --global --ignore-scripts npm@11.19.1',
+  ])('rejects unsafe package-manager bootstrap drift: %s', (command) => {
+    expect(() => assertLifecycleScriptContract(command, '')).toThrow('Deployment install must disable lifecycle scripts');
   });
 
   it.each([
@@ -3627,20 +3658,25 @@ function runReceiptValidation(
 }
 
 function assertLifecycleScriptContract(runnerScript: string, remoteScript: string): void {
-  for (const line of executableLines(`${runnerScript}\n${remoteScript}`)) {
-    for (const invocation of npmCommandInvocations(line)) {
-      if (
-        ['ci', 'install', 'i', 'add'].includes(invocation.command) &&
-        (invocation.command !== 'ci' || !invocation.args.includes('--ignore-scripts'))
-      ) {
-        throw new Error('Deployment install must disable lifecycle scripts');
+  for (const [script, allowBootstrap] of [[runnerScript, true], [remoteScript, false]] as const) {
+    for (const line of executableLines(script)) {
+      if (allowBootstrap && line.trim() === 'npm install --global --ignore-scripts npm@11.19.1') {
+        continue;
       }
-      if (invocation.command === 'exec') {
+      for (const invocation of npmCommandInvocations(line)) {
+        if (
+          ['ci', 'install', 'i', 'add'].includes(invocation.command) &&
+          (invocation.indirect || invocation.command !== 'ci' || !invocation.args.includes('--ignore-scripts'))
+        ) {
+          throw new Error('Deployment install must disable lifecycle scripts');
+        }
+        if (invocation.command === 'exec') {
+          throw new Error('Deployment executable must prohibit implicit package installation');
+        }
+      }
+      if (/\bnpx\b/.test(line)) {
         throw new Error('Deployment executable must prohibit implicit package installation');
       }
-    }
-    if (/\bnpx\b/.test(line)) {
-      throw new Error('Deployment executable must prohibit implicit package installation');
     }
   }
 }
@@ -3648,13 +3684,21 @@ function assertLifecycleScriptContract(runnerScript: string, remoteScript: strin
 interface NpmCommandInvocation {
   command: string;
   args: string[];
+  indirect: boolean;
 }
 
 function npmCommandInvocations(line: string): NpmCommandInvocation[] {
-  const tokens = line.replace(/[(){}]/g, ' ').split(/\s+/).filter(Boolean);
+  // Package operations must use literal commands. Conservatively inspect a
+  // complete shell-variable token as a possible npm executable; do not try to
+  // infer its value from assignments or the runner/remote environment.
+  const normalized = line.replace(
+    /(^|[\s;&|])(?:"\$(?:\{[^}\n]+\}|[A-Za-z_][A-Za-z0-9_]*)"|\$(?:\{[^}\n]+\}|[A-Za-z_][A-Za-z0-9_]*))(?=\s|$)/g,
+    '$1__dynamic_command__'
+  );
+  const tokens = normalized.replace(/[(){}]/g, ' ').replace(/(&&|\|\||[;|&])/g, ' $1 ').split(/\s+/).filter(Boolean);
   const invocations: NpmCommandInvocation[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index] !== 'npm') {
+    if (tokens[index] !== 'npm' && tokens[index] !== '__dynamic_command__') {
       continue;
     }
     let commandIndex = index + 1;
@@ -3668,17 +3712,17 @@ function npmCommandInvocations(line: string): NpmCommandInvocation[] {
         commandIndex += 1;
       }
     }
-    if (commandIndex >= tokens.length || /^(?:&&|\|\||[;|])$/.test(tokens[commandIndex])) {
+    if (commandIndex >= tokens.length || /^(?:&&|\|\||[;|&])$/.test(tokens[commandIndex])) {
       continue;
     }
     const args: string[] = [];
     for (let argIndex = commandIndex + 1; argIndex < tokens.length; argIndex += 1) {
-      if (/^(?:&&|\|\||[;|])$/.test(tokens[argIndex]) || tokens[argIndex] === 'npm') {
+      if (/^(?:&&|\|\||[;|&])$/.test(tokens[argIndex]) || tokens[argIndex] === 'npm' || tokens[argIndex] === '__dynamic_command__') {
         break;
       }
       args.push(tokens[argIndex]);
     }
-    invocations.push({ command: tokens[commandIndex], args });
+    invocations.push({ command: tokens[commandIndex], args, indirect: tokens[index] === '__dynamic_command__' });
   }
   return invocations;
 }

@@ -4,7 +4,7 @@ Status: canonical repo contract
 Owner: bluesky-feed
 Service class: production_service
 Contract version: 2
-Last updated: 2026-09-07
+Last updated: 2026-09-15
 Last verified: not yet rehearsed for the 2026-08-02 workflow revision
 
 > Canonical reference for any human or tooling operating in this repo.
@@ -90,7 +90,7 @@ posts are ranked. This feed exists to:
                                           +------------+
 ```
 
-**Runtime:** Node.js 20, TypeScript 5, Fastify 5
+**Runtime:** Node.js 22.23.2, npm 11.19.1, Fastify 5. TypeScript resolves to 6.0.3 for root, web and feed SDK builds, and 5.9.3 for CLI and web-next (respective manifests and lockfiles).
 **Data layer:** PostgreSQL 16 (posts, scores, governance, audit), Redis 7 (feed
 cache, sessions)
 **Frontend:** Next.js 15 static export, React 19, Tailwind (public pages,
@@ -99,7 +99,7 @@ transparency dashboard, voting UI)
 **NLP:** winkNLP (topic classification at ingestion), HuggingFace Transformers
 (embedding-based classification)
 **Deploy target:** DigitalOcean VPS via systemd + nginx reverse proxy
-**Container:** Multi-stage Docker build (node:20-alpine)
+**Container:** Multi-stage Docker build (node:22.23.2-bookworm-slim)
 
 ---
 
@@ -321,12 +321,12 @@ npm run cli -- --help
 
 ### Docker deploy (not M0-compatible)
 
-The generic image does not yet stamp an immutable reviewed release SHA, so
-its health response reports `revision: null` even though dependency readiness
-can pass. The exact-SHA workflow rejects that missing identity, so do not use
-this path for M0 production promotion. Container release stamping, immutable
-image pinning, and container-level identity evidence belong to the later
-runtime-hardening release.
+The generic image requires a full lowercase `SOURCE_REVISION`, records it in
+`dist/.release-sha` and the OCI revision label, and pins its Node base image by
+digest. `/health` reports that stamped revision. These checks establish artifact
+identity; they do not establish review approval or qualify this standalone Docker
+path for M0 production promotion. Protected-host adoption and rollout still
+require the separately approved release workflow and its acceptance evidence.
 
 The process-liveness contract is deliberately separate from rollout readiness:
 `/health/live` stays available while the process runs, and the systemd watchdog
@@ -339,7 +339,7 @@ emergency disk pressure. Stale ingestion therefore blocks promotion without
 forcing a watchdog restart loop.
 
 ```bash
-docker build -t bluesky-feed .
+docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t bluesky-feed .
 docker run -d --name bluesky-feed --env-file .env -p 3000:3000 bluesky-feed
 ```
 
@@ -473,11 +473,18 @@ See `docs/OPERABILITY.md`, `docs/runbooks/operator-quickstart.md`, and
    must contain a Linear key. Enforcement happens in org-policy / CI checks and
    any local hook configuration that may be installed by the workspace.
 
-3. **Separate install targets.** Backend and frontends have separate
-   `node_modules`. Run `npm install` at repo root and `cd web-next && npm
-   install` for the canonical frontend. Install `web/` dependencies only when
-   working on the legacy compatibility frontend. The `npm run verify` command
-   covers both frontend packages.
+3. **Pinned package manager and separate install targets.** Use npm 11.19.1
+   with Node 22.23.2. Install it into the selected development runtime with
+   `npm install --global --ignore-scripts npm@11.19.1`, then verify `npm --version`
+   before installing project dependencies. CI and both Docker stages perform
+   the same pinned setup. The root, CLI and two web manifests require this npm
+   version; package installs fail on a mismatch with engine-strict enabled.
+   Each workspace has its own `node_modules`; run `npm ci --ignore-scripts` at
+   root, `cli/`, `web/`, and `web-next/` before `npm run verify`.
+   The retained `min-release-age=3` policy filters newly resolved versions by
+   three days. It does not independently age-check every frozen lockfile entry
+   consumed by `npm ci`; reviewed lockfile changes and canonical audits remain
+   required. See [npm configuration](https://docs.npmjs.com/cli/v11/using-npm/config/#min-release-age).
 
 4. **PostgreSQL port offset in production.** Docker Compose binds PostgreSQL to
    `127.0.0.1:5433` (not standard 5432) and Redis to `127.0.0.1:6380` (not
@@ -517,6 +524,10 @@ See `docs/OPERABILITY.md`, `docs/runbooks/operator-quickstart.md`, and
     reference. Keep `.coderabbit.yaml` `reviews.auto_review.auto_incremental_review`
     enabled so the freshness gate receives a fresh non-skipped CodeRabbit signal
     on the latest push.
+    `quality-gate` is also local: its pinned public upstream exposes no runtime
+    inputs, so Corgi must enforce its own Node/npm pins before installation.
+    Preserve the original root clean install, Python syntax check, read-only
+    permissions, and `quality-gate / quality-gate` check name when updating it.
 
 ---
 

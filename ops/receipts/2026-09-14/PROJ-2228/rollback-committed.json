@@ -1,0 +1,156 @@
+{
+  "scope": "bounded local retained-image rollback rehearsal",
+  "network": {
+    "name": "corgi-2228-runtime-smoke",
+    "expected_id": "1d1fd54c5d476d1e8f8a2cbcac1ac0fee75d8023aa43947d95220d9857b96c25"
+  },
+  "candidate": {
+    "tag": "corgi-2228:committed-a",
+    "expected_revision": "e4ff4bbdf04e07bd23956752ce08d61f99c4daa4",
+    "name": "corgi-2228-app-a",
+    "image_id": "sha256:89095c4c49ec6369703a028c7c6a634b2201b05d2ea0b155d5ec3fd27937cbf2"
+  },
+  "known_good": {
+    "name": "corgi-2228-app-b",
+    "expected_revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+    "expected_image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72"
+  },
+  "terminal": "passed",
+  "steps": {
+    "network_verified": {
+      "time": 1789456852.452422,
+      "result": {
+        "id": "1d1fd54c5d476d1e8f8a2cbcac1ac0fee75d8023aa43947d95220d9857b96c25",
+        "name": "corgi-2228-runtime-smoke",
+        "internal": true,
+        "members": {
+          "corgi-2228-redis": "121c8e1967c5e5d1c28df1565236b9ab94fbac3a1edda8f60f18e69af8813c52",
+          "corgi-2228-pg": "254397433a782b7983e1de543ea205a42d701302c504609cf2ce731b63a08fef",
+          "corgi-2228-demo-redis": "5f8dbbb21a26488ec4a7e70e14988e208aeee3bb3f81e5428c27e1ce9c5d92b3",
+          "corgi-2228-app-b": "ac4fa11f2c4284f30086eb585bbd79cdd2366925b6f5e296c40022a22666b4ef"
+        }
+      }
+    },
+    "known_good_retained": {
+      "time": 1789456853.09499,
+      "result": {
+        "identity": {
+          "container_id": "ac4fa11f2c4284f30086eb585bbd79cdd2366925b6f5e296c40022a22666b4ef",
+          "image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72",
+          "native_uid": "1001",
+          "node_abi": "127",
+          "native_imports": "ok",
+          "health": {
+            "kind": "http",
+            "status": 200,
+            "body": "{\"status\":\"degraded\",\"revision\":\"c880755d234d15d1df290cecea0ac0d3315e9571\"}"
+          },
+          "revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+          "readiness": {
+            "kind": "http",
+            "status": 200,
+            "body": "{\"status\":\"ready\"}"
+          }
+        },
+        "migrations": {
+          "count": 34,
+          "max_filename": "034_governance_proposed_topic_weights.sql"
+        }
+      }
+    },
+    "candidate_image_resolved": {
+      "time": 1789456853.119953,
+      "result": {
+        "tag": "corgi-2228:committed-a",
+        "image_id": "sha256:89095c4c49ec6369703a028c7c6a634b2201b05d2ea0b155d5ec3fd27937cbf2"
+      }
+    },
+    "candidate_verified_before_fault": {
+      "time": 1789456855.249054,
+      "result": {
+        "container_id": "f8a0aef8b06756528b9195921f1cdeb28cd3c4285266a5b7ed09216e8f561a9b",
+        "image_id": "sha256:89095c4c49ec6369703a028c7c6a634b2201b05d2ea0b155d5ec3fd27937cbf2",
+        "native_uid": "1001",
+        "node_abi": "127",
+        "native_imports": "ok",
+        "health": {
+          "kind": "http",
+          "status": 200,
+          "body": "{\"status\":\"degraded\",\"revision\":\"e4ff4bbdf04e07bd23956752ce08d61f99c4daa4\"}"
+        },
+        "revision": "e4ff4bbdf04e07bd23956752ce08d61f99c4daa4",
+        "readiness": {
+          "kind": "http",
+          "status": 200,
+          "body": "{\"status\":\"ready\"}"
+        },
+        "startup_readiness": {
+          "kind": "http",
+          "status": 200,
+          "body": "{\"status\":\"ready\"}"
+        },
+        "migrations": {
+          "count": 34,
+          "max_filename": "034_governance_proposed_topic_weights.sql"
+        },
+        "network_members": {
+          "corgi-2228-redis": "121c8e1967c5e5d1c28df1565236b9ab94fbac3a1edda8f60f18e69af8813c52",
+          "corgi-2228-pg": "254397433a782b7983e1de543ea205a42d701302c504609cf2ce731b63a08fef",
+          "corgi-2228-demo-redis": "5f8dbbb21a26488ec4a7e70e14988e208aeee3bb3f81e5428c27e1ce9c5d92b3",
+          "corgi-2228-app-a": "f8a0aef8b06756528b9195921f1cdeb28cd3c4285266a5b7ed09216e8f561a9b"
+        }
+      }
+    },
+    "candidate_disconnected_only": {
+      "time": 1789456855.3406222,
+      "result": {
+        "network_id": "1d1fd54c5d476d1e8f8a2cbcac1ac0fee75d8023aa43947d95220d9857b96c25",
+        "container": "corgi-2228-app-a",
+        "remaining_members": {
+          "corgi-2228-redis": "121c8e1967c5e5d1c28df1565236b9ab94fbac3a1edda8f60f18e69af8813c52",
+          "corgi-2228-pg": "254397433a782b7983e1de543ea205a42d701302c504609cf2ce731b63a08fef",
+          "corgi-2228-demo-redis": "5f8dbbb21a26488ec4a7e70e14988e208aeee3bb3f81e5428c27e1ce9c5d92b3"
+        }
+      }
+    },
+    "candidate_failure_observed": {
+      "time": 1789456860.4910898,
+      "result": {
+        "bounded_seconds": 60,
+        "probes": [
+          {
+            "time": 1789456860.491085,
+            "kind": "http",
+            "status": 500,
+            "body": "{\"error\":\"INTERNAL_ERROR\",\"message\":\"An unexpected error occurred\",\"correlationId\":\"181cae1c\"}"
+          }
+        ]
+      }
+    },
+    "known_good_restored": {
+      "time": 1789456863.306897,
+      "result": {
+        "container_id": "ac4fa11f2c4284f30086eb585bbd79cdd2366925b6f5e296c40022a22666b4ef",
+        "image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72",
+        "native_uid": "1001",
+        "node_abi": "127",
+        "native_imports": "ok",
+        "health": {
+          "kind": "http",
+          "status": 200,
+          "body": "{\"status\":\"degraded\",\"revision\":\"c880755d234d15d1df290cecea0ac0d3315e9571\"}"
+        },
+        "revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+        "readiness": {
+          "kind": "http",
+          "status": 200,
+          "body": "{\"status\":\"ready\"}"
+        },
+        "migrations": {
+          "count": 34,
+          "max_filename": "034_governance_proposed_topic_weights.sql"
+        }
+      }
+    }
+  }
+}

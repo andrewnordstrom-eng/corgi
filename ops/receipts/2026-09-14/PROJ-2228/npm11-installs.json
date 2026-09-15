@@ -1,0 +1,46 @@
+[
+  {
+    "workspace": "root",
+    "command": "npm ci --ignore-scripts",
+    "npm": "11.19.1",
+    "node": "22.23.2",
+    "exit_code": 0,
+    "started_at": "2026-09-15T07:45:25.788010+00:00",
+    "finished_at": "2026-09-15T07:45:32.136272+00:00",
+    "EBADENGINE_count": 0,
+    "sha256": "188ae693779d1336e23b576c0f8e072abf6ab05c7465708b8eda352b902a4f50"
+  },
+  {
+    "workspace": "cli",
+    "command": "npm ci --ignore-scripts",
+    "npm": "11.19.1",
+    "node": "22.23.2",
+    "exit_code": 0,
+    "started_at": "2026-09-15T07:45:25.788388+00:00",
+    "finished_at": "2026-09-15T07:45:26.383994+00:00",
+    "EBADENGINE_count": 0,
+    "sha256": "cb828202ed0ef513d04d8f8af6942fe5e96168426a48e0f852af6909ac1db51d"
+  },
+  {
+    "workspace": "web",
+    "command": "npm ci --ignore-scripts",
+    "npm": "11.19.1",
+    "node": "22.23.2",
+    "exit_code": 0,
+    "started_at": "2026-09-15T07:45:25.788501+00:00",
+    "finished_at": "2026-09-15T07:45:29.661472+00:00",
+    "EBADENGINE_count": 0,
+    "sha256": "42d6a03defad783fbc055119739c521206461e92850f6bad5b29cf5b32aa3d4f"
+  },
+  {
+    "workspace": "web-next",
+    "command": "npm ci --ignore-scripts",
+    "npm": "11.19.1",
+    "node": "22.23.2",
+    "exit_code": 0,
+    "started_at": "2026-09-15T07:45:25.789279+00:00",
+    "finished_at": "2026-09-15T07:45:33.508611+00:00",
+    "EBADENGINE_count": 0,
+    "sha256": "a167940c46b8db28dea5f89d4f9aa546837c0bc927870c9945c6778517775bc8"
+  }
+]

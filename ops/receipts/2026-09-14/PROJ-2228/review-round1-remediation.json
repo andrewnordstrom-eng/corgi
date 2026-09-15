@@ -1,0 +1,74 @@
+{
+  "recorded_at": "2026-09-15T07:53:25.107342+00:00",
+  "base_sha": "ed3ade2a4f3487c34cdfaad8d55d64832462e944",
+  "status": "PARTIAL_ROLLBACK_FAILURE_MATRIX_IDENTIFIED_IN_ROUND2",
+  "review_comments": [
+    4013124459,
+    4013124471,
+    4013124477,
+    4013124485
+  ],
+  "fixes": [
+    "Bound every Docker subprocess; sanitize timeout diagnostics",
+    "Verify candidate identity and successful shutdown before B restoration; preserve failed/ambiguous startup and primary error",
+    "Validate exact npmrc COPY placement independently in both Docker stages",
+    "Pin npm11.19.1 across local/CI/Docker; preserve min-release-age=3 and document frozen-lockfile boundary"
+  ],
+  "npm_provenance": {
+    "version": "11.19.1",
+    "published_at": "2026-08-26T21:47:53.323Z",
+    "integrity": "sha512-ztsxKxt/kkIaAs+2i0GU6I+DRmUdrNasxTZKJe9TCdSjKxlhah/4r/hl5ygMD6XAg1qZ9c2TNomR4qgOydp10g==",
+    "node_engine": "^20.17.0 || >=22.9.0",
+    "config_source": "https://docs.npmjs.com/cli/v11/using-npm/config/#min-release-age"
+  },
+  "cooldown_real_registry_control": {
+    "fixture": "is-number@7.0.0",
+    "min_release_age_days": 36500,
+    "npm10_resolution_exit": 0,
+    "npm11_resolution_exit": 1,
+    "npm11_resolution_error": "ETARGET",
+    "npm11_frozen_ci_exit": 0,
+    "meaning": "Age filter applies to resolution; frozen npm ci is not an independent age attestation"
+  },
+  "full_verify_personal": {
+    "exit_code": 0,
+    "files": 160,
+    "passed": 2284,
+    "skipped": 1
+  },
+  "independent_focused_qa": {
+    "passed": 400,
+    "cli_runtime": "Node22.23.2 npm11.19.1 ABI127 PASS"
+  },
+  "independent_harness_qa": {
+    "controlled_tests_passed": 6,
+    "main_failure_probe": "Nonzero exit preserves primary error; no B start after candidate stop timeout"
+  },
+  "installed_tree_diagnostic": {
+    "exit_code": 0,
+    "problems": [],
+    "note": "Earlier npm10 installed-tree warning was not reproduced under npm11; no npm bug attribution is inferred"
+  },
+  "docs_install_disposable_linux_exit": 0,
+  "logs_sha256": {
+    "full-verify-npm11-policy-fixed.log": "69df103c39352330fa7dd142e16ab6e4ce74bb26b32574d06707c54db1362a85",
+    "docs-npm11-install.log": "03663995160a8f549f60a70a0c9e68ef7dc0d19c95dc03219bf63fe8679e1979",
+    "old-npm-engine-negative.log": "e789432c561f3d66d921aea6390032355039ddc192073ce6e29518ae7807325b",
+    "npm11-installed-tree.json": "c78c60d8a9b5b8dc1f4c4b17260a66aef64b769eefe0591ef80c666ed839af6f"
+  },
+  "pending": [
+    "Commit-bound npm11 image and real hardened-harness replay",
+    "Hosted CI, CodeQL and CodeRabbit on the next head"
+  ],
+  "excluded": [
+    "merge",
+    "deployment",
+    "credentials",
+    "freeze changes"
+  ],
+  "correction": {
+    "recorded_at": "2026-09-15T08:30:28.743440+00:00",
+    "reason": "Original six controlled harness tests did not include all required readiness-timeout/network-disconnect failure fixtures. Existing recorded test outcomes remain valid, but they do not establish the full failure matrix.",
+    "superseding_evidence": "Round2 validation pending; do not read the earlier status as complete harness verification."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "container": "65dca02b53eb07b79a835e94ddf589a7ddf877d7b2b46aaf680e3b51fb522d4a",
+  "image": "sha256:fd64bd19a09e70217dbee621394b49eef73ff9d55e2541acf2be48119a8c4412",
+  "expected_revision": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
+  "readiness": {
+    "status": 200,
+    "body": {
+      "status": "ready"
+    }
+  },
+  "health": {
+    "status": "degraded",
+    "revision": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb"
+  },
+  "live_ingestion_qualified": false
+}

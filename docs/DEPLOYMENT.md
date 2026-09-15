@@ -31,9 +31,45 @@ Save the returned `did`.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git nginx certbot python3-certbot-nginx redis-server postgresql
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt install -y curl xz-utils git nginx certbot python3-certbot-nginx redis-server postgresql
+```
+
+Install the exact Node release into a versioned directory. These archive hashes
+come from the [signed Node 22.23.2 release checksums](https://nodejs.org/dist/v22.23.2/SHASUMS256.txt.asc).
+The directory must not already exist; this procedure does not overwrite an
+existing runtime installation.
+
+```bash
+(
+  set -eu
+  case "$(uname -m)" in
+    x86_64)
+      CORGI_NODE_ARCH=x64
+      CORGI_NODE_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
+      ;;
+    aarch64|arm64)
+      CORGI_NODE_ARCH=arm64
+      CORGI_NODE_SHA256=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8
+      ;;
+    *) printf 'Unsupported Node architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
+  esac
+  CORGI_NODE_TMP="$(mktemp -d)"
+  trap 'rm -rf "$CORGI_NODE_TMP"' EXIT
+  cd "$CORGI_NODE_TMP"
+  curl --fail --silent --show-error --location --proto '=https' \
+    --output node.tar.xz \
+    "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-${CORGI_NODE_ARCH}.tar.xz"
+  printf '%s  node.tar.xz\n' "$CORGI_NODE_SHA256" | sha256sum --check --strict
+  sudo mkdir -m 0755 /opt/corgi-node-v22.23.2
+  sudo tar --extract --xz --file node.tar.xz --strip-components=1 \
+    --no-same-owner --no-same-permissions --directory /opt/corgi-node-v22.23.2
+)
+export PATH="/opt/corgi-node-v22.23.2/bin:$PATH"
+# Install the exact package manager into this versioned runtime prefix.
+sudo /opt/corgi-node-v22.23.2/bin/node \
+  /opt/corgi-node-v22.23.2/lib/node_modules/npm/bin/npm-cli.js \
+  install --global --prefix /opt/corgi-node-v22.23.2 --ignore-scripts npm@11.19.1
+test "$(npm --version)" = "11.19.1"
 ```
 
 ## 3. Create PostgreSQL database
@@ -55,6 +91,16 @@ cd /opt
 sudo git clone https://github.com/andrewnordstrom-eng/corgi.git /opt/bluesky-feed
 sudo chown -R "$USER":"$USER" /opt/bluesky-feed
 cd /opt/bluesky-feed
+```
+
+Before installing dependencies, verify that the host matches the repository's
+exact runtime contract. Stop if Node, npm, or the native module ABI differs.
+
+```bash
+test "$(cat .nvmrc)" = "22.23.2"
+test "$(node --version)" = "v22.23.2"
+test "$(npm --version)" = "11.19.1"
+test "$(node -p 'process.versions.modules')" = "127"
 ```
 
 ## 5. Configure environment
@@ -136,7 +182,7 @@ Group=bluesky-feed
 WorkingDirectory=/opt/bluesky-feed
 Environment=NODE_ENV=production
 EnvironmentFile=/opt/bluesky-feed/.env
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/opt/corgi-node-v22.23.2/bin/node dist/index.js
 Restart=on-failure
 RestartSec=10
 

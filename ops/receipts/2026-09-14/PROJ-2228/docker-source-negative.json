@@ -1,0 +1,17 @@
+[
+  {
+    "case": "empty",
+    "exit_code": 1,
+    "expected_nonzero": true
+  },
+  {
+    "case": "short",
+    "exit_code": 1,
+    "expected_nonzero": true
+  },
+  {
+    "case": "multiline",
+    "exit_code": 1,
+    "expected_nonzero": true
+  }
+]

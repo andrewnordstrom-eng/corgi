@@ -29,7 +29,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
+
+      - name: Pin npm
+        run: |
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Verify runtime contract
+        run: node scripts/check-runtime-contract.mjs
 
       - name: Verify docs freshness and integrity
         run: npm run docs:verify
@@ -47,11 +55,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
           cache: "npm"
           cache-dependency-path: |
             package-lock.json
             cli/package-lock.json
+
+      - name: Pin npm
+        run: |
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Verify runtime contract
+        run: node scripts/check-runtime-contract.mjs
 
       - name: Install backend dependencies
         run: npm ci --ignore-scripts
@@ -81,6 +97,23 @@ jobs:
         working-directory: cli
         run: node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate
 
+      - name: Build and probe production image
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build --build-arg SOURCE_REVISION="$SOURCE_REVISION" --tag corgi-runtime-probe .
+          docker run --rm --env SOURCE_REVISION="$SOURCE_REVISION" corgi-runtime-probe node -e '
+            const fs = require("node:fs");
+            const revision = process.env.SOURCE_REVISION;
+            if (revision.length !== 40 || !/^[0-9a-f]{40}$/.test(revision)) throw new Error(`invalid expected revision: ${revision}`);
+            if (fs.readFileSync("/app/dist/.release-sha", "utf8").trim() !== revision) throw new Error("release stamp mismatch");
+            require("onnxruntime-node");
+            require("sharp");
+            if (process.version !== "v22.23.2") throw new Error(`unexpected Node ${process.version}`);
+            if (process.versions.modules !== "127") throw new Error(`unexpected ABI ${process.versions.modules}`);
+          '
+
   frontend-verify:
     name: frontend-verify
     runs-on: ubuntu-latest
@@ -94,11 +127,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
           cache: "npm"
           cache-dependency-path: |
             web/package-lock.json
             web-next/package-lock.json
+
+      - name: Pin npm
+        run: |
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Verify runtime contract
+        run: node scripts/check-runtime-contract.mjs
 
       - name: Install frontend dependencies
         run: cd web && npm ci --ignore-scripts

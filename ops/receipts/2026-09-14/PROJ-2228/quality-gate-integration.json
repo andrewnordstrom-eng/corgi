@@ -1,0 +1,220 @@
+{
+  "recorded_at": "2026-09-15T08:09:15.843962+00:00",
+  "base_sha": "883b1d2119d58862944361c510a8c92c80d35b9f",
+  "status": "LOCAL_QUALITY_GATE_REPAIR_VERIFIED_HOSTED_NEXT_HEAD_PENDING",
+  "cause_verified_personally": {
+    "run": "https://github.com/andrewnordstrom-eng/corgi/actions/runs/34944103397",
+    "upstream": "https://github.com/andrewnordstrom-eng/.github-public/blob/5be6b1ba47fe3f338447eea17e6b5c465fc979f3/.github/workflows/quality-gate.yml",
+    "actual_node": "24.20.0",
+    "actual_npm": "11.19.0",
+    "required_npm": "11.19.1",
+    "failure": "EBADENGINE",
+    "upstream_inputs": []
+  },
+  "repair": "Preserve original root lifecycle-disabled clean install, Python syntax coverage, triggers, permissions, pinned actions and exact check name in a local workflow; align Node/npm and validate the runtime contract before installation.",
+  "expected_check_name": "quality-gate / quality-gate",
+  "source_sha256": {
+    ".github/workflows/quality-gate.yml": "e9736b11110d90007b5bf1a9143afa0bdb3cc788f7988ed1bcba00bf2469cdeb",
+    "scripts/check-runtime-contract.mjs": "c69a591cc18908e1487720e1c10b08465b155f0a9c16398641dd59f9bbbeb0e9",
+    "tests/runtime-contract.test.ts": "9528138b356e0ba338078279cd5a176ed69979bde4b8a0aad9bfa3d39f08f029"
+  },
+  "personal_full_verify": {
+    "exit_code": 0,
+    "test_files": 160,
+    "passed": 2286,
+    "skipped": 1,
+    "build_lint_frontend_export": "PASS",
+    "log_sha256": "337fa6c8a902946b9cbf0093af04adaac2c051acb254632993a7fa724d25dbb3",
+    "invocation": "Node22.23.2/npm11.19.1 PATH; dotenv.parse(.env.example) public fixture into child environment excluding NODE_ENV so each tool selects its standard mode; npm run verify with loopback access"
+  },
+  "personal_python_compileall": {
+    "command": "python3 -m compileall -q .",
+    "exit_code": 0,
+    "interpreter": "Python 3.12.1",
+    "hosted_python_3_11": "PENDING"
+  },
+  "independent_luna_qa": {
+    "runtime_contract_passed": 23,
+    "deployment_guard_passed": 379,
+    "runtime_cli": "PASS Node22.23.2 npm11.19.1 ABI127",
+    "expectations_sha256": "b701485399abb575eb50f7aa039d9a4a2be0536529ceeaa2fe47eafeecc8a93a",
+    "report_sha256": "d7544ba488f1882dc1f6b347f1bebcce317b78b3b260fb6ce2c79fd7dd35b977"
+  },
+  "prior_exact_committed_npm11_replay": {
+    "receipt": {
+      "scope": "bounded local retained-image rollback rehearsal",
+      "network": {
+        "name": "corgi-2228-runtime-smoke",
+        "expected_id": "c86a51b9e74ebb03771792aa195d166d7478891121e69fe3662027ac18d1652c"
+      },
+      "candidate": {
+        "tag": "sha256:50351fce28fef288d8097056673ed46e0bb5af19213e237a2f91ef9f46b927dc",
+        "expected_revision": "883b1d2119d58862944361c510a8c92c80d35b9f",
+        "name": "corgi-2228-app-npm11",
+        "image_id": "sha256:50351fce28fef288d8097056673ed46e0bb5af19213e237a2f91ef9f46b927dc"
+      },
+      "known_good": {
+        "name": "corgi-2228-app-b",
+        "expected_revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+        "expected_image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72"
+      },
+      "terminal": "passed",
+      "steps": {
+        "network_verified": {
+          "time": 1789459018.505617,
+          "result": {
+            "id": "c86a51b9e74ebb03771792aa195d166d7478891121e69fe3662027ac18d1652c",
+            "name": "corgi-2228-runtime-smoke",
+            "internal": true,
+            "members": {
+              "corgi-2228-demo-redis": "26e365a2c7f0b8f0519fe3f8af6e60c21affafbada725468a7d888bbecf60f0a",
+              "corgi-2228-pg": "61aa4214325db4f1a3132090f2c4fb5ea98e27f2bbd70bf237d7c906602d5a89",
+              "corgi-2228-app-b": "c93faa0b92b707cfaec29bb46269a77ca0bfe6659aa62106944f7a9993b4381e",
+              "corgi-2228-redis": "dfa5368cf6c734237aaa61368d541ec77a2bd80e32cae52fe9e695bf5b6b6c34"
+            }
+          }
+        },
+        "known_good_retained": {
+          "time": 1789459019.051925,
+          "result": {
+            "identity": {
+              "container_id": "c93faa0b92b707cfaec29bb46269a77ca0bfe6659aa62106944f7a9993b4381e",
+              "image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72",
+              "native_uid": "1001",
+              "node_abi": "127",
+              "native_imports": "ok",
+              "health": {
+                "kind": "http",
+                "status": 200,
+                "body": "{\"status\":\"degraded\",\"revision\":\"c880755d234d15d1df290cecea0ac0d3315e9571\"}"
+              },
+              "revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+              "readiness": {
+                "kind": "http",
+                "status": 200,
+                "body": "{\"status\":\"ready\"}"
+              }
+            },
+            "migrations": {
+              "count": 34,
+              "max_filename": "034_governance_proposed_topic_weights.sql"
+            }
+          }
+        },
+        "candidate_image_resolved": {
+          "time": 1789459019.090251,
+          "result": {
+            "tag": "sha256:50351fce28fef288d8097056673ed46e0bb5af19213e237a2f91ef9f46b927dc",
+            "image_id": "sha256:50351fce28fef288d8097056673ed46e0bb5af19213e237a2f91ef9f46b927dc"
+          }
+        },
+        "candidate_verified_before_fault": {
+          "time": 1789459021.17564,
+          "result": {
+            "container_id": "ac192ff1f6bf58e431036929e6f124d1ce9a7f72f25fdd8b97835b59998db04d",
+            "image_id": "sha256:50351fce28fef288d8097056673ed46e0bb5af19213e237a2f91ef9f46b927dc",
+            "native_uid": "1001",
+            "node_abi": "127",
+            "native_imports": "ok",
+            "health": {
+              "kind": "http",
+              "status": 200,
+              "body": "{\"status\":\"degraded\",\"revision\":\"883b1d2119d58862944361c510a8c92c80d35b9f\"}"
+            },
+            "revision": "883b1d2119d58862944361c510a8c92c80d35b9f",
+            "readiness": {
+              "kind": "http",
+              "status": 200,
+              "body": "{\"status\":\"ready\"}"
+            },
+            "startup_readiness": {
+              "kind": "http",
+              "status": 200,
+              "body": "{\"status\":\"ready\"}"
+            },
+            "migrations": {
+              "count": 34,
+              "max_filename": "034_governance_proposed_topic_weights.sql"
+            },
+            "network_members": {
+              "corgi-2228-demo-redis": "26e365a2c7f0b8f0519fe3f8af6e60c21affafbada725468a7d888bbecf60f0a",
+              "corgi-2228-pg": "61aa4214325db4f1a3132090f2c4fb5ea98e27f2bbd70bf237d7c906602d5a89",
+              "corgi-2228-app-npm11": "ac192ff1f6bf58e431036929e6f124d1ce9a7f72f25fdd8b97835b59998db04d",
+              "corgi-2228-redis": "dfa5368cf6c734237aaa61368d541ec77a2bd80e32cae52fe9e695bf5b6b6c34"
+            }
+          }
+        },
+        "candidate_disconnected_only": {
+          "time": 1789459021.2905412,
+          "result": {
+            "network_id": "c86a51b9e74ebb03771792aa195d166d7478891121e69fe3662027ac18d1652c",
+            "container": "corgi-2228-app-npm11",
+            "remaining_members": {
+              "corgi-2228-demo-redis": "26e365a2c7f0b8f0519fe3f8af6e60c21affafbada725468a7d888bbecf60f0a",
+              "corgi-2228-pg": "61aa4214325db4f1a3132090f2c4fb5ea98e27f2bbd70bf237d7c906602d5a89",
+              "corgi-2228-redis": "dfa5368cf6c734237aaa61368d541ec77a2bd80e32cae52fe9e695bf5b6b6c34"
+            }
+          }
+        },
+        "candidate_failure_observed": {
+          "time": 1789459026.4337301,
+          "result": {
+            "bounded_seconds": 60,
+            "probes": [
+              {
+                "time": 1789459026.4337258,
+                "kind": "http",
+                "status": 500,
+                "body": "{\"error\":\"INTERNAL_ERROR\",\"message\":\"An unexpected error occurred\",\"correlationId\":\"5fb0def8\"}"
+              }
+            ]
+          }
+        },
+        "known_good_restored": {
+          "time": 1789459029.320178,
+          "result": {
+            "container_id": "c93faa0b92b707cfaec29bb46269a77ca0bfe6659aa62106944f7a9993b4381e",
+            "image_id": "sha256:64532fa96ce105f66bfd5bed951e17c1b71e9d70574c0e481d848258a4eecc72",
+            "native_uid": "1001",
+            "node_abi": "127",
+            "native_imports": "ok",
+            "health": {
+              "kind": "http",
+              "status": 200,
+              "body": "{\"status\":\"degraded\",\"revision\":\"c880755d234d15d1df290cecea0ac0d3315e9571\"}"
+            },
+            "revision": "c880755d234d15d1df290cecea0ac0d3315e9571",
+            "readiness": {
+              "kind": "http",
+              "status": 200,
+              "body": "{\"status\":\"ready\"}"
+            },
+            "migrations": {
+              "count": 34,
+              "max_filename": "034_governance_proposed_topic_weights.sql"
+            }
+          }
+        }
+      }
+    },
+    "harness_sha256": "9e2b3f3ff60a121144b9f6e4901f98b4d878ce2a67c4fb917ec18c39712891d0",
+    "independent_receipt_qa_sha256": "4fcebf60887491d3202191c5308f90d5e4ecffd066482246d16f2cda34b6281a"
+  },
+  "failed_validation_invocations_preserved": {
+    "full-verify-quality-gate.log": "Missing public test fixture configuration",
+    "full-verify-quality-gate-env.log": "Sandbox denied loopback listen",
+    "full-verify-quality-gate-localhost.log": "Export inherited development NODE_ENV; final invocation lets tools set their standard mode"
+  },
+  "pending": [
+    "Commit-bound final image probe and rollback",
+    "Final-head hosted CI, CodeQL and CodeRabbit"
+  ],
+  "excluded": [
+    "merge",
+    "deployment",
+    "credentials",
+    "freeze changes",
+    "protected-host qualification",
+    "changed-schema rollback qualification"
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "issue": "PROJ-2228",
+  "recorded_at": "2026-09-15T02:56:00.021474+00:00",
+  "base_sha": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
+  "admission_verdict": "ALLOW",
+  "lease": "atl-566965bca06e5173",
+  "fencing_token": 271,
+  "authorization_comment": "1b68a081-c8d6-4402-a418-fcc1c00ce093",
+  "qa_plan_last_modified_utc": "2026-09-15T02:44:24.782347+00:00",
+  "node": "22.23.2",
+  "npm": "10.9.8",
+  "node_abi": "127",
+  "node_darwin_arm64_archive_sha256": "5eff7a9011895aae3f29d06f167b84a62b028a591370c7cafb59103559fd26e1",
+  "signature_fingerprint": "CC68F5A3106FF448322E48ED27F5E38D5B0A215F",
+  "baseline_probes": {
+    "node20_strict_dryrun": {
+      "exit_code": 1,
+      "expected": "EBADENGINE @atproto/api@0.20.26"
+    },
+    "alpine_linux_arm64": {
+      "exit_code": 1,
+      "onnx": "missing ld-linux-aarch64.so.1",
+      "sharp": "loaded"
+    },
+    "bookworm_slim_linux_arm64": {
+      "exit_code": 0,
+      "onnx": "loaded",
+      "sharp": "loaded"
+    }
+  },
+  "logs": {
+    "corgi-2228-node20-negative.log": "3c738da93b880fd104f85d034452ed8ff245bac5f7c0a971528aa4cc665f9dac",
+    "corgi-2228-alpine-native-baseline.log": "3ef4b40aa9ad4d90a0638bfbc03d39222c955a69ff2156a02804d132c400662b",
+    "corgi-2228-slim-native-baseline.log": "db05543f368b1ebbbd0f2378e7487a77fcd5d04e789a6f046f7dbf55cc58b67e",
+    "corgi-2228-node-image-index.json": "c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
+    "corgi-2228-node-slim-index.json": "83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+  },
+  "production_qualification": false,
+  "qa_plan_original_sha256": "5bb50d0ae56342426f7366b342fb259098d499e0b93c9fbb809149c8968fb89f",
+  "qa_plan_receipt_sha256": "3264fa1ab7ecef5622a7e5909749df1674b73dde9f0b6389cd986eadb6b4286c"
+}

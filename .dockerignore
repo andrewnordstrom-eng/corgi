@@ -1,0 +1,17 @@
+node_modules/
+**/node_modules/
+dist/
+dist-lab/
+web/dist/
+web-next/.next/
+web-next/out/
+cli/dist/
+.git/
+.github/
+.codex/
+.claude/
+.env
+.env.*
+coverage/
+test-results/
+*.log

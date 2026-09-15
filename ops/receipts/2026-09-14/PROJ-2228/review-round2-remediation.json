@@ -1,0 +1,126 @@
+{
+  "recorded_at": "2026-09-15T08:46:35.131560+00:00",
+  "base_sha": "90911545431db38c31519fa2a4cc8ca5867d3e0c",
+  "status": "LOCAL_ROUND2_REPAIRS_VERIFIED_NEXT_HEAD_HOSTED_AND_REPLAY_PENDING",
+  "findings": [
+    {
+      "comment": 4013531529,
+      "disposition": "FIXED",
+      "evidence": "quality-gate checkout persist-credentials=false; no credentials accessed or changed"
+    },
+    {
+      "comment": 4013531544,
+      "disposition": "FIXED",
+      "evidence": "npm11-lockfile-invariance.json binds exact c9833d1 base and 9091154 candidate, raw/normalized hashes, counts, and exact normalization method; current lock bytes still match the bound candidate"
+    },
+    {
+      "comment": 4013531550,
+      "disposition": "FIXED",
+      "evidence": "Earlier six-test matrix marked PARTIAL; 19-test matrix now exercises actual main/readiness/disconnect/recovery failures and preserves terminal errors"
+    },
+    {
+      "comment": 4013531553,
+      "disposition": "FIXED",
+      "evidence": "Exact-name absence permits B restoration after failed run; owned candidate ID+image must match and stop before restoration; ambiguous/foreign/unknown states withhold mutation"
+    },
+    {
+      "comment": 4013531560,
+      "disposition": "FIXED",
+      "evidence": "Dependency-free canonical YAML step subset; dedicated executable commands, correct same-job ordering, scalar boundaries, source-presence conditions, normal shells and no error suppression"
+    },
+    {
+      "comment": 4013531567,
+      "disposition": "FIXED",
+      "evidence": "Conservative variable-command token handling rejects indirect install/i/add/ci, with only the literal pinned runner npm bootstrap exempted; command separators retain boundaries"
+    }
+  ],
+  "preverification_expectations": {
+    "sha256": "3de73e0bfda6b1bdf3ed64ef8b1b87b3ece0a74378a53bc2952ca387f336f6af",
+    "text": "# PROJ-2228 CR round 2 frozen QA expectations\n\nFrozen before implementation changes. Scope is limited to the six review findings and their direct regression coverage.\n\n## 1. Candidate run state machine\n\n- `docker run` fails and exact-name inspection confirms **absent**: record the original nonzero run failure, restore B only after the absence is confirmed, and keep the process nonzero.\n- `docker run` fails and exact-name inspection confirms **present**: require candidate image identity match and a successful candidate stop before starting B; preserve the original run failure and fail if stop fails.\n- Exact-name inspection is **ambiguous** (timeout/error) or image identity mismatches: withhold candidate cleanup/restoration of B; preserve the original run error and exit nonzero. No foreign container may be stopped.\n- Existing finite timeout behavior and primary-error precedence remain intact.\n\n## 2. Complete controlled failure matrix\n\nThe harness tests must explicitly map each branch, with no retroactive claim that the prior six-test receipt covered them:\n\n- run failure + exact-name absent;\n- run failure + exact-name present and expected image;\n- run failure + exact-name present but wrong image;\n- run failure + ambiguous/timeout inspection;\n- candidate readiness timeout;\n- candidate-only network disconnect failure;\n- candidate stop failure and stop timeout;\n- known-good B start failure and start timeout;\n- cleanup/recovery inspection failure;\n- cleanup/recovery stop failure and timeout;\n- successful candidate stop required before B start;\n- recovery failure produces nonzero exit and retains the primary error.\n\nReadiness timeout and network-disconnect failure need dedicated fixtures. Existing historical receipts remain evidence only for the paths they actually exercised.\n\n## 3. Runtime workflow verification\n\nRuntime checker validation must inspect executable workflow steps within the same job, in order: pinned setup-node, exact npm bootstrap, npm version check, runtime verifier, then install. A YAML comment or non-executed scalar containing the runtime command must not satisfy the check; removing the executable runtime step from the relevant job must fail. Multiple jobs must not allow one job to satisfy another\u2019s ordering.\n\n## 4. Indirect npm installs\n\nDeployment lifecycle checks must reject shell-variable-indirected `npm install`, `npm i`, and `npm add` package installs in both runner and remote scripts, including remote package URLs. The only exemption is the exact runner bootstrap `npm install --global --ignore-scripts npm@11.19.1`; variants, extra arguments, prefixes, remote placement, and missing `--ignore-scripts` remain rejected.\n\n## 5. Workflow hardening and receipts\n\n- Checkout steps must retain `persist-credentials: false`; this is configuration hardening and does not imply credential access or a production claim.\n- Lockfile/receipt output must bind exact base and candidate image digests, exact source/candidate SHA, and normalized hash fields consistently. No raw secret material may be emitted.\n\nAcceptance requires focused negative and positive tests for each repaired branch, current-source hashes, and receipts bound to the tested source. Production controller behavior, protected-host rollback, and changed-schema compatibility remain outside scope.\n"
+  },
+  "personal_execution": {
+    "full_verify": {
+      "command": "npm run verify with Node22.23.2/npm11.19.1 and public .env.example values excluding inherited NODE_ENV",
+      "exit_code": 0,
+      "test_files": 160,
+      "passed": 2301,
+      "skipped": 1,
+      "log_sha256": "81cedbe765e4c8b03a8e563fd63594526bdeb0d3ffc50f22e007e21aa414da9a",
+      "boundaries": [
+        "Optional src/mcp-local absent and skipped; shipped src/mcp included in root TypeScript build",
+        "Next export retains existing type/lint skips; legacy web lint passed"
+      ]
+    },
+    "harness": {
+      "command": "python3 -m unittest -v ops/receipts/2026-09-14/PROJ-2228/test_rollback_committed.py",
+      "exit_code": 0,
+      "tests_passed": 19,
+      "log_sha256": "acbd65a6ebf2cc9c18d9dbce46ff70f66a21193139fe03ee0d876bd11478211e",
+      "parameter_default_ast_check": "zero functions with default parameters in harness and test file"
+    },
+    "docs_verify_after_contract_note": {
+      "exit_code": 0,
+      "tracked_docs": 15,
+      "markdown_scanned": 39
+    },
+    "indirect_install_red_control": {
+      "failed_tests": 6,
+      "log_sha256": "00230cf47e11e39f4ad285939cb405a8353843c1e871ae7ad9850c2fe055b550"
+    },
+    "real_docker_exact_name_probe": {
+      "container_id": "43f864a148093da9f1c969b314ba280d474176d859978a39bb447119eb41f432",
+      "name": "corgi-2228-name-state-probe",
+      "queries": {
+        "^corgi-2228-name-state-probe$": "43f864a14809",
+        "^/corgi-2228-name-state-probe$": "43f864a14809"
+      }
+    }
+  },
+  "independent_luna_integration": "Runtime guard comments/scalars/env mutations and indirect-install checks reviewed without remaining targeted blockers; narrow canonical parser only, not general YAML or shell analysis.",
+  "independent_luna_qa": {
+    "ready_subset": {
+      "runtime_tests": 30,
+      "deployment_tests": 387,
+      "report_sha256": "8357a7b66648cf9762e8055314cb59fb7192a26a3e052e6c52e8d35f5e53db8e"
+    },
+    "harness": {
+      "tests_passed": 19,
+      "report_sha256": "09bd5b38e6f63560b8550037455338128c5b98d704ca64a6e735d3e2d295fc3b",
+      "matrix_report": "# PROJ-2228 round 2 final harness QA\n\n## Binding\n\n- HEAD: `90911545431db38c31519fa2a4cc8ca5867d3e0c`\n- Harness source SHA-256: `c5a9da5773f1c6b74d3cee26a95b816096e529df209d6f1b2fc42328482fca3e`\n- Harness test SHA-256: `3adea5da29d2ec83a759a179a5ccdca51a85e48d36de2a3bd30b1ede07fdfcdd`\n- Independent log SHA-256: `f2526bffde9dd3bf0939b946bc59e6a8c4197bd598fe5807997c10ac4285101b`\n\n## Execution\n\n```text\npython3 -m unittest -v ops/receipts/2026-09-14/PROJ-2228/test_rollback_committed.py\n```\n\nExit 0: **19 tests passed** in 4.083s. No Docker was invoked. AST inspection found no function parameter defaults in the committed harness.\n\n## Frozen-matrix mapping\n\n- Run failure + exact-name absent: `test_main_run_failure_absent_restores_but_preserves_primary_error`; asserts exit 1, original error, ABSENT state, B start.\n- Run failure + expected present: `test_main_run_failure_present_expected_stops_candidate_then_restores_b`; asserts exit 1, original error, stop-A before start-B.\n- Foreign image and ambiguous exact-name state: `test_main_run_failure_foreign_or_ambiguous_withholds_cleanup_and_restore`; asserts exit 1, original error, no A stop/B start.\n- Ambiguous inspection timeout: `test_main_run_timeout_with_presence_query_failure_withholds_restore`; asserts AMBIGUOUS, original timeout, no B start.\n- Readiness timeout: `test_main_readiness_timeout_stops_candidate_before_restoring_b`; asserts original error and stop-A before B.\n- Network disconnect failure: `test_main_network_disconnect_failure_stops_candidate_before_restoring_b`; asserts original error and stop-A before B.\n- Candidate stop failure and timeout: `test_main_candidate_stop_failure_withholds_b_restore`; asserts both variants exit 1, retain primary error, and do not start B.\n- B start failure and timeout: `test_main_known_good_start_failure_and_timeout_preserve_primary_error`; asserts both variants exit 1, retain primary error, and record recovery errors.\n- Recovery inspect failure: `test_recovery_inspection_failure_withholds_cleanup_and_restore`; asserts no Docker cleanup/start calls and restore withheld.\n- Recovery stop failure: `test_recovery_does_not_start_known_good_when_candidate_stop_fails`; direct seam assertion covers no B start.\n- Recovery B nonzero/timeout: `test_recovery_records_known_good_start_nonzero` and `test_recovery_records_known_good_start_timeout`.\n- Successful stop-before-B ordering: `test_recovery_stops_candidate_then_starts_known_good` plus expected-present main case.\n- Initial B stop failure: `test_main_initial_known_good_stop_failure_preserves_error_and_does_not_run_a`.\n- Runtime container-ID mismatch/foreign ownership: `test_main_rejects_mismatched_runtime_container_id_before_fault`; asserts no disconnect, A stop, or B start.\n- Name-state parser: `test_candidate_name_state_maps_absent_present_and_ambiguous`.\n- Timeout/redaction and finite timeout propagation: the two Docker timeout tests.\n\nThe fixture uses actual `main()` control flow for readiness and disconnect failures; Docker is mocked only at the external seam. The container-ID mismatch test compares distinct expected IDs. At this revision, the image-ID equality used the same fixture value on both sides; no independent image-ID mismatch test was present.\n\n## Verdict and boundaries\n\n**PASS for the local repaired harness and complete frozen failure matrix.** This validates mocked control flow, terminal status, cleanup ordering, and primary-error precedence. It does not replace the pending real final-image replay or hosted checks, and makes no production-controller, protected-host, or changed-schema compatibility claim.\n"
+    }
+  },
+  "source_sha256": {
+    ".github/workflows/quality-gate.yml": "199bb24aea52a78633814eae9c2dfb09b32421a4f8f636b61be3726e5757f7ec",
+    "docs/agent/REPO_CONTRACT.md": "a6a9c97f0f7afe642b3e3fc5d237b056bbc0e17092770cacff251a81952359e2",
+    "ops/receipts/2026-09-14/PROJ-2228/npm11-lockfile-invariance.json": "c028ec8948db6b603730edfe2bb3a765216451b0add3606bf34d77f2f6540d77",
+    "ops/receipts/2026-09-14/PROJ-2228/review-round1-harness-qa.md": "3be927ce7a486999f20439effc4e5c8f0e6a3758b7e68f4f0cf80156a1d46d85",
+    "ops/receipts/2026-09-14/PROJ-2228/review-round1-remediation.json": "87890e7d0b4d5c309c3f42485085408501b24e74bc36cc27acf93940dd2bf8c2",
+    "ops/receipts/2026-09-14/PROJ-2228/rollback-committed.py": "c5a9da5773f1c6b74d3cee26a95b816096e529df209d6f1b2fc42328482fca3e",
+    "ops/receipts/2026-09-14/PROJ-2228/test_rollback_committed.py": "3adea5da29d2ec83a759a179a5ccdca51a85e48d36de2a3bd30b1ede07fdfcdd",
+    "scripts/check-runtime-contract.mjs": "086c42dd2f33e198323c62d6a574e34a89c47ec2e586369ac7b4bb83c80d8e05",
+    "tests/demo-shadow-isolation.test.ts": "9fca4550ea903f7cc740a76b858ad0bbea83f06c593c8454b9c3ee1fc0528ddd",
+    "tests/runtime-contract.test.ts": "acea8fc41fa443db3b8d708e3cb8d5da82783087210768fbdd41c86054214e7b"
+  },
+  "supersedes": [
+    "review-round1-harness-qa.md earlier PASS wording",
+    "review-round1-remediation.json earlier complete-matrix status"
+  ],
+  "pending": [
+    "Commit-bound actual image and repaired-harness replay",
+    "Fresh hosted CI, CodeQL and CodeRabbit on next head"
+  ],
+  "excluded": [
+    "merge",
+    "deployment",
+    "credentials",
+    "freeze changes",
+    "protected-host qualification",
+    "changed-schema rollback qualification",
+    "general YAML/shell parsing guarantee"
+  ],
+  "round3_claim_correction": {
+    "review_comment": 4013877885,
+    "scope": "Historical 19-test matrix includes independent container-ID mismatch only; independent image-ID mismatch and nominal main success coverage are added separately in round3. Prior counts and hashes remain historical.",
+    "original_matrix_report_sha256": "09bd5b38e6f63560b8550037455338128c5b98d704ca64a6e735d3e2d295fc3b"
+  }
+}
