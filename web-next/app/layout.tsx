@@ -1,21 +1,7 @@
 import type { Metadata } from "next"
-import { Plus_Jakarta_Sans, Inter, IBM_Plex_Mono } from "next/font/google"
+import "./local-fonts.css"
 import { Providers } from "@/components/providers"
 import "./globals.css"
-
-const _plusJakartaSans = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["600", "700", "800"],
-  variable: "--font-display",
-})
-
-const _inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
-
-const _ibmPlexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-mono",
-})
 
 const SITE_URL = "https://feed.corgi.network"
 const SITE_TITLE = "Corgi — Your community runs the feed."
@@ -61,7 +47,7 @@ export default function RootLayout({
     // next-themes; shallow (one level), so real hydration bugs elsewhere still warn.
     <html lang="en" className="bg-background" suppressHydrationWarning>
       <body
-        className={`${_plusJakartaSans.variable} ${_inter.variable} ${_ibmPlexMono.variable} font-sans antialiased`}
+        className="corgi-font-vars font-sans antialiased"
       >
         <Providers>{children}</Providers>
       </body>

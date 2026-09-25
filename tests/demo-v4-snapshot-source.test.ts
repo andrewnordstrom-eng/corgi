@@ -307,12 +307,16 @@ describe('Corgi Commons release snapshot', () => {
 
     expect(corpus.health).toMatchObject({ status: 'degraded', source: 'fixture_fallback' });
     expect(corpus.warnings[0]?.message).toContain('approved snapshot unavailable');
+    expect(corpus.health.sourcePostCount).toBe(corpus.items.length);
+    expect(corpus.health.candidatePosts72h).toBe(corpus.items.length);
+    expect(corpus.health.eligiblePostCount).toBe(corpus.items.length);
     expect(corpus.items.every((item) =>
       item.publishedRank === undefined
       && item.publishedScore === undefined
       && item.publicationAdjustment === undefined
     )).toBe(true);
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => corpus,
       now: () => new Date('2026-07-11T23:00:00.000Z'),
@@ -327,39 +331,16 @@ describe('Corgi Commons release snapshot', () => {
     });
   });
 
-  it('loads the approved corpus exclusively from frozen score inputs', async () => {
+  it('loads frozen inputs without retained rows or historical epoch and denies positive deletion', async () => {
     const snapshot = readApprovedCommunityGovSnapshot(DEMO_SOURCE_SNAPSHOT_LIMIT);
     const readScore = vi.fn(async () => {
       throw new Error('mutable score reader must not be called for approved snapshot entries');
     });
     const dbPool = {
       query: vi.fn(async (sql: string) => {
-        if (sql.includes('FROM governance_epochs')) {
-          return {
-            rows: [{
-              id: snapshot.productionEpochId,
-              recency_weight: 0.2,
-              engagement_weight: 0.2,
-              bridging_weight: 0.2,
-              source_diversity_weight: 0.2,
-              relevance_weight: 0.2,
-              topic_weights: {},
-            }],
-          };
-        }
-        return {
-          rows: snapshot.entries.map((entry) => ({
-            uri: entry.uri,
-            author_did: entry.frozen?.authorDid,
-            created_at: entry.frozen?.createdAt,
-            text: 'Frozen published-feed entry',
-            topic_vector: entry.frozen?.topicVector,
-            embed_url: entry.frozen?.embedUrl,
-            text_length: entry.frozen?.textLength,
-            candidate_count_72h: snapshot.entries.length,
-            unique_authors_72h: 68,
-          })),
-        };
+        expect(sql).toContain('deleted = TRUE');
+        expect(sql).not.toContain('governance_epochs');
+        return { rows: [] };
       }),
     };
     const appViewPost = (uri: string, index: number) => ({
@@ -413,6 +394,24 @@ describe('Corgi Commons release snapshot', () => {
       run_id: snapshot.entries[0]?.frozen?.scoreRunId,
       source: 'approved_demo_snapshot',
     });
+
+    const deniedUri = corpus.items[0].postUri;
+    const deletedCorpus = await loadShadowDemoCorpus({
+      communityId: 'community_gov', now: new Date(snapshot.capturedAt), fetchFn, readScore,
+      dbPool: { query: vi.fn(async () => ({ rows: [{ uri: deniedUri }] })) },
+      readPublishedSnapshot: async () => snapshot,
+    });
+    expect(deletedCorpus.health.eligiblePostCount).toBe(73);
+    expect(deletedCorpus.items.some((item) => item.postUri === deniedUri)).toBe(false);
+    const failedLookupFetch = vi.fn();
+    const lookupFailure = await loadShadowDemoCorpus({
+      communityId: 'community_gov', now: new Date(snapshot.capturedAt), fetchFn: failedLookupFetch, readScore,
+      dbPool: { query: vi.fn(async () => { throw new Error('deletion lookup unavailable'); }) },
+      readPublishedSnapshot: async () => snapshot,
+    });
+    expect(lookupFailure.health.source).toBe('fixture_fallback');
+    expect(lookupFailure.warnings[0]?.message).toContain('deletion lookup unavailable');
+    expect(failedLookupFetch).not.toHaveBeenCalled();
 
     const publicUris = new Set(snapshot.entries
       .filter((entry) => entry.frozen?.reviewedCid !== null)

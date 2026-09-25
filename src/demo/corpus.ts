@@ -5,6 +5,7 @@ import { logger } from '../lib/logger.js';
 import {
   createDefaultPublishedFeedSnapshotReader,
   readApprovedCommunityGovPolicy,
+  readApprovedCommunityGovSnapshot,
   COMMUNITY_GOV_FEED_URI,
   DEMO_SOURCE_SNAPSHOT_LIMIT,
   type PublishedFeedSnapshot,
@@ -21,6 +22,7 @@ import {
   type ShadowDemoCorpus,
   type ShadowDemoCorpusHealth,
   type ShadowDemoCorpusItem,
+  type ShadowDemoDisplayPost,
   type ShadowDemoRawScores,
   type ShadowDemoWarning,
   type ShadowDemoTopicIntent,
@@ -279,32 +281,31 @@ async function loadCommunityGovCorpus(
     const approvedPolicy = behavior.policy;
     const readPublishedSnapshot = options.readPublishedSnapshot ?? createDefaultPublishedFeedSnapshotReader();
     const snapshot = await readPublishedSnapshot(DEMO_SOURCE_SNAPSHOT_LIMIT);
-    const epoch = await readEpochById(options.dbPool, snapshot.productionEpochId);
-    if (!epoch) {
-      throw new Error(`Production epoch ${snapshot.productionEpochId} from feed metadata was not found`);
-    }
-    const rows = await readPublishedFeedRows(options.dbPool, snapshot);
+    // Retention absence is not deletion. Frozen ranking inputs remain valid,
+    // but explicit current local deletion evidence must still deny hydration.
+    const deletedUris = await readDeletedPublishedUris(options.dbPool, snapshot);
     const topicCatalog = approvedPolicy.topicCatalog;
     const baseTopicIntent = topicIntentFromCatalog(null, topicCatalog);
-    const rowByUri = new Map(rows.map((row) => [row.uri, row]));
     const orderedRows = snapshot.entries.flatMap((entry) => {
-      const row = rowByUri.get(entry.uri);
       const frozen = entry.frozen;
-      if (!row || !frozen) return [];
+      if (deletedUris.has(entry.uri) || !frozen) return [];
       return [{
-        ...row,
+        uri: entry.uri,
         reviewed_cid: frozen.reviewedCid,
         author_did: frozen.authorDid,
         created_at: frozen.createdAt,
+        text: '', // Bodies are obtained only from current public AppView.
         topic_vector: { ...frozen.topicVector },
         embed_url: frozen.embedUrl,
         text_length: frozen.textLength,
+        candidate_count_72h: snapshot.entries.length,
+        unique_authors_72h: 0,
         published: entry,
       }];
     });
     const scoredItems = await buildScoredCorpusItems({
       rows: orderedRows,
-      epochId: epoch.id,
+      epochId: snapshot.productionEpochId,
       readScore: options.readScore,
     });
     const hydrated = await hydrateCorpusItemsWithAppView({
@@ -326,7 +327,7 @@ async function loadCommunityGovCorpus(
         communityId: options.communityId,
         now: options.now,
         reason: `Corgi Commons snapshot failed reviewer-safe gates: ${gateFailures.join('; ')}`,
-        activeEpochId: epoch.id,
+        activeEpochId: snapshot.productionEpochId,
         baseWeights: approvedPolicy.signalWeights,
         baseTopicIntent,
         topicCatalog,
@@ -343,7 +344,7 @@ async function loadCommunityGovCorpus(
     return {
       corpusId: `corpus-${randomUUID()}`,
       communityId: options.communityId,
-      baseProductionEpochId: epoch.id,
+      baseProductionEpochId: snapshot.productionEpochId,
       baseWeights: approvedPolicy.signalWeights,
       baseTopicIntent,
       createdAt: options.now.toISOString(),
@@ -423,35 +424,16 @@ export function applyCommunityGovSnapshotGateStatus(
   return { ...health, status: 'degraded' };
 }
 
-async function readEpochById(dbPool: Pick<Pool, 'query'>, epochId: number): Promise<ActiveEpochRow | null> {
-  const result = await dbPool.query<ActiveEpochRow>(
-    `SELECT id, recency_weight, engagement_weight, bridging_weight, source_diversity_weight, relevance_weight,
-            topic_weights
-     FROM governance_epochs
-     WHERE id = $1
-     LIMIT 1`,
-    [epochId]
-  );
-  return result.rows[0] ?? null;
-}
-
-async function readPublishedFeedRows(
+async function readDeletedPublishedUris(
   dbPool: Pick<Pool, 'query'>,
   snapshot: PublishedFeedSnapshot
-): Promise<CandidatePostRow[]> {
-  const result = await dbPool.query<CandidatePostRow>(
-    `SELECT DISTINCT ON (p.uri)
-            p.uri, p.author_did, p.created_at, p.text, p.topic_vector,
-            p.embed_url, COALESCE(LENGTH(p.text), 0) AS text_length,
-            $2::int AS candidate_count_72h,
-            0::int AS unique_authors_72h
-     FROM posts p
-     WHERE p.uri = ANY($1::text[])
-       AND p.deleted = FALSE
-     ORDER BY p.uri, p.created_at DESC`,
-    [snapshot.entries.map((entry) => entry.uri), snapshot.entries.length]
+): Promise<Set<string>> {
+  const result = await dbPool.query<{ uri: string }>(
+    `SELECT DISTINCT uri FROM posts
+     WHERE uri = ANY($1::text[]) AND deleted = TRUE`,
+    [snapshot.entries.map((entry) => entry.uri)]
   );
-  return result.rows;
+  return new Set(result.rows.map((row) => row.uri));
 }
 
 function topicIntentFromCatalog(
@@ -683,19 +665,18 @@ function fallbackCorpus(options: {
     createdAt: options.now.toISOString(),
     expiresAt: expiresAt(options.now).toISOString(),
     items: rankedItems,
-    health:
-      options.health
-        ? { ...options.health, status: 'degraded', source: 'fixture_fallback' }
-        : {
-        status: 'degraded',
-        source: 'fixture_fallback',
-        candidatePosts72h: 0,
-        publicScoredPosts: rankedItems.length,
-        uniqueAuthors72h: uniqueAuthorCount(rankedItems),
-        bridgePostShare: bridgePostShare(rankedItems),
-        topAuthorConcentration: topAuthorConcentration(rankedItems),
-        sampledAt: options.now.toISOString(),
-      },
+    health: {
+      status: 'degraded',
+      source: 'fixture_fallback',
+      candidatePosts72h: rankedItems.length,
+      sourcePostCount: rankedItems.length,
+      eligiblePostCount: rankedItems.length,
+      publicScoredPosts: rankedItems.length,
+      uniqueAuthors72h: uniqueAuthorCount(rankedItems),
+      bridgePostShare: bridgePostShare(rankedItems),
+      topAuthorConcentration: topAuthorConcentration(rankedItems),
+      sampledAt: options.now.toISOString(),
+    },
     warnings: [warning],
     topicCatalog: options.topicCatalog,
     sourceFeedUri: options.sourceFeedUri,
@@ -930,4 +911,70 @@ async function defaultFetch(input: string, init: { method: 'GET'; signal: AbortS
   text: () => Promise<string>;
 }> {
   return globalThis.fetch(input, init);
+}
+
+/** Current disclosure only; returned metadata never replaces the frozen scoring corpus. */
+export function createDisplayProjector(options: {
+  dbPool: Pick<Pool, 'query'>;
+  fetchFn: DemoFetchFunction;
+}): (corpus: ShadowDemoCorpus, items: readonly ShadowDemoCorpusItem[]) => Promise<ReadonlyMap<string, ShadowDemoDisplayPost>> {
+  return async (corpus, items) => {
+    if (corpus.health.source === 'fixture_fallback') {
+      return new Map(items.map((item) => [item.postUri, item.displayPost]));
+    }
+    const hidden = (reason: string): ReadonlyMap<string, ShadowDemoDisplayPost> =>
+      new Map(items.map((item) => [item.postUri, hiddenDisplayPost(reason)]));
+    if (items.length === 0) return new Map();
+    const approved = corpus.communityId === 'community_gov'
+      ? readApprovedCommunityGovSnapshot(DEMO_SOURCE_SNAPSHOT_LIMIT) : null;
+    const matchesApproved = approved !== null
+      && corpus.sourceSnapshot?.digest === approved.snapshotDigest
+      && corpus.sourceSnapshot.runId === approved.sourceRunId
+      && corpus.sourceSnapshot.baselineOrderDigest === approved.baselineOrderDigest
+      && corpus.sourceFeedUri === approved.feedUri
+      && corpus.baseProductionEpochId === approved.productionEpochId;
+    const inputs = items.map((item) => ({
+      ...item,
+      reviewedCid: item.reviewedCid !== undefined ? item.reviewedCid
+        : matchesApproved ? approved.entries.find((entry) => entry.uri === item.postUri)?.frozen?.reviewedCid ?? null
+          : null,
+    }));
+    const hydrated = await hydrateCorpusItemsWithAppView({ items: inputs, fetchFn: options.fetchFn, timeoutMs: 2000 });
+    try {
+      // Route B uses the retained legacy posts table, not the Route A lifecycle-version table.
+      // Current AppView must already match the reviewed CID. Retention absence is not deletion;
+      // any retained ambiguity, deletion or different CID denies disclosure. Query last.
+      const query = {
+        text: `WITH requested AS (
+            SELECT * FROM unnest($1::text[], $2::text[]) AS target(uri, reviewed_cid)
+          )
+          SELECT requested.uri,
+            (local.row_count > 0 AND NOT (local.row_count = 1 AND local.matching_live_count = 1)) AS denied
+          FROM requested
+          CROSS JOIN LATERAL (
+            SELECT COUNT(*) AS row_count,
+              COUNT(*) FILTER (WHERE p.deleted = FALSE AND p.cid = requested.reviewed_cid)
+                AS matching_live_count
+            FROM posts p WHERE p.uri = requested.uri
+          ) local`,
+        values: [inputs.map((item) => item.postUri), inputs.map((item) => item.reviewedCid)],
+        query_timeout: 1000,
+      };
+      const result = await options.dbPool.query<{ uri: string; denied: boolean }>(query);
+      if (result.rows.length !== items.length || new Set(result.rows.map((row) => row.uri)).size !== items.length
+        || result.rows.some((row) => typeof row.denied !== 'boolean' || !items.some((item) => item.postUri === row.uri))) {
+        return hidden('Current local display eligibility could not be established');
+      }
+      const denied = new Set(result.rows.filter((row) => row.denied).map((row) => row.uri));
+      return new Map(hydrated.map((item) => [item.postUri, denied.has(item.postUri)
+        ? hiddenDisplayPost('Post withheld by current local deletion or denial') : item.displayPost]));
+    } catch (error) {
+      logger.warn({ errorKind: error instanceof Error ? error.name : 'unknown', postCount: items.length }, 'Demo current local display eligibility failed closed');
+      return hidden('Current local display eligibility could not be established');
+    }
+  };
+}
+
+export function createDefaultDisplayProjector(): ReturnType<typeof createDisplayProjector> {
+  return createDisplayProjector({ dbPool: defaultDb, fetchFn: defaultFetch });
 }

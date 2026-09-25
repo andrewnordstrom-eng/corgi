@@ -86,7 +86,8 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": "^22.19.0",
+    "npm": "11.19.1"
   },
   "repository": {
     "type": "git",

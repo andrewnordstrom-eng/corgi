@@ -10,6 +10,7 @@ const SITE_URL = "https://feed.corgi.network"
 const PUBLIC_ROUTES: Array<{ path: string; priority: number }> = [
   { path: "/", priority: 1 },
   { path: "/demo/", priority: 0.9 },
+  { path: "/feed/", priority: 0.9 },
   { path: "/how-it-works/", priority: 0.9 },
   { path: "/start/", priority: 0.8 },
   { path: "/about/", priority: 0.6 },

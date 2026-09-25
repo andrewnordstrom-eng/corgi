@@ -5,6 +5,9 @@ import type {
   ShadowDemoPublicPost,
 } from './types.js';
 
+// Bump when the public-view eligibility or hydration contract changes.
+export const DEMO_VISIBILITY_POLICY_VERSION = '2026-09-23.current-display-reviewed-cid-v2';
+
 const HIDDEN_LABELS = new Set(['!no-unauthenticated', '!hide', '!takedown']);
 const ADULT_ONLY_LABELS = new Set(['porn', 'sexual', 'nudity', 'graphic-media']);
 const POST_AT_URI_PATTERN = /^at:\/\/(did:[a-z0-9]+:[A-Za-z0-9._:-]+)\/app\.bsky\.feed\.post\/([A-Za-z0-9._~:@!$&'()*+,;=-]+)$/;
@@ -95,6 +98,10 @@ export function hiddenReasonForPublicView(input: unknown): string | null {
     return 'Post metadata unavailable from Bluesky public AppView';
   }
   const post = parsedPost.data;
+  const authority = typeof post.uri === 'string' ? POST_AT_URI_PATTERN.exec(post.uri)?.[1] : undefined;
+  if (authority === undefined || post.author?.did !== authority) {
+    return 'Post identity is inconsistent with its URI';
+  }
 
   const labelValues = [
     ...labelValuesFrom(post.labels),

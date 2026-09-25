@@ -3,10 +3,14 @@ import { config } from '../config.js';
 import { redis } from '../db/redis.js';
 import { logger } from '../lib/logger.js';
 import { COMMUNITY_GOV_REDIS_KEYS, type FeedCommunity } from './community-registry.js';
+import {
+  CURRENT_FEED_PUBLICATION_KEYS,
+  LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS,
+} from '../scoring/feed-publication-keys.js';
 
 const SNAPSHOT_TTL_SECONDS = 300;
 export const CURRENT_FEED_SNAPSHOT_KEY = COMMUNITY_GOV_REDIS_KEYS.currentSnapshot;
-const CURRENT_FEED_GENERATION_KEY = COMMUNITY_GOV_REDIS_KEYS.snapshotGeneration;
+export const CURRENT_FEED_GENERATION_KEY = COMMUNITY_GOV_REDIS_KEYS.snapshotGeneration;
 const SNAPSHOT_KEY_PREFIX = COMMUNITY_GOV_REDIS_KEYS.snapshotPrefix;
 export const FEED_SNAPSHOT_BY_ID_MEMORY_CACHE_MAX_ENTRIES = 1_000;
 const PUBLISH_CURRENT_SNAPSHOT_SCRIPT = `
@@ -32,6 +36,43 @@ redis.call('INCR', generationKey)
 redis.call('DEL', currentKey)
 return 1
 `;
+const READ_COHERENT_PUBLISHED_ORDER_SCRIPT = `
+local limit = tonumber(ARGV[1])
+if limit == nil or limit < 1 then
+  return redis.error_reply('invalid published order limit')
+end
+if redis.call('EXISTS', KEYS[2]) == 0 then
+  if #KEYS >= 4 and redis.call('EXISTS', KEYS[4]) == 1 then
+    return cjson.encode({ unavailable = true })
+  end
+  local legacyUris = redis.call('ZREVRANGE', KEYS[1], 0, limit - 1)
+  if #legacyUris == 0 then
+    return '{"uris":[],"legacy":true}'
+  end
+  return cjson.encode({ uris = legacyUris, legacy = true })
+end
+local expectedCount = tonumber(redis.call('GET', KEYS[3]))
+if expectedCount == nil or expectedCount <= 0 or
+   redis.call('ZCARD', KEYS[1]) ~= expectedCount then
+  return cjson.encode({ unavailable = true })
+end
+if redis.call('LLEN', KEYS[2]) ~= expectedCount then
+  return cjson.encode({ unavailable = true })
+end
+local orderedUris = redis.call('LRANGE', KEYS[2], 0, expectedCount - 1)
+local seen = {}
+for _, uri in ipairs(orderedUris) do
+  if seen[uri] or not redis.call('ZSCORE', KEYS[1], uri) then
+    return cjson.encode({ unavailable = true })
+  end
+  seen[uri] = true
+end
+local limitedUris = {}
+for index = 1, math.min(limit, #orderedUris) do
+  table.insert(limitedUris, orderedUris[index])
+end
+return cjson.encode({ uris = limitedUris })
+`;
 
 export interface FeedSnapshot {
   snapshotId: string;
@@ -40,7 +81,13 @@ export interface FeedSnapshot {
 
 interface FeedSnapshotSpec {
   sortedSetKey: string;
+  orderedListKey: string | null;
+  countKey: string | null;
+  schemaVersionKey: string | null;
   fallbackSortedSetKey: string | null;
+  fallbackOrderedListKey: string | null;
+  fallbackCountKey: string | null;
+  fallbackSchemaVersionKey: string | null;
   fallbackMetricKey: string | null;
   currentSnapshotKey: string;
   generationKey: string;
@@ -50,13 +97,56 @@ interface FeedSnapshotSpec {
 
 const CURRENT_FEED_SNAPSHOT_SPEC: FeedSnapshotSpec = {
   sortedSetKey: COMMUNITY_GOV_REDIS_KEYS.current,
+  orderedListKey: COMMUNITY_GOV_REDIS_KEYS.order,
+  countKey: COMMUNITY_GOV_REDIS_KEYS.count,
+  schemaVersionKey: CURRENT_FEED_PUBLICATION_KEYS.metadata.schemaVersion,
   fallbackSortedSetKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGood,
+  fallbackOrderedListKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodOrder,
+  fallbackCountKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodCount,
+  fallbackSchemaVersionKey: LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.metadata.schemaVersion,
   fallbackMetricKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodFallbackTotal,
   currentSnapshotKey: CURRENT_FEED_SNAPSHOT_KEY,
   generationKey: CURRENT_FEED_GENERATION_KEY,
   snapshotKeyPrefix: SNAPSHOT_KEY_PREFIX,
   maxPosts: config.FEED_MAX_POSTS,
 };
+
+async function readPublishedOrder(
+  sortedSetKey: string,
+  orderedListKey: string | null,
+  countKey: string | null,
+  schemaVersionKey: string | null,
+  maxPosts: number
+): Promise<string[]> {
+  if (orderedListKey !== null && countKey !== null && typeof redis.lrange === 'function') {
+    const keys = [sortedSetKey, orderedListKey, countKey];
+    if (schemaVersionKey !== null) {
+      keys.push(schemaVersionKey);
+    }
+    const raw = await redis.eval(
+      READ_COHERENT_PUBLISHED_ORDER_SCRIPT,
+      keys.length,
+      ...keys,
+      maxPosts.toString()
+    );
+    if (typeof raw !== 'string') {
+      throw new TypeError(`Published feed order Redis script returned ${typeof raw}, expected string`);
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new TypeError('Published feed order Redis script returned a non-object payload');
+    }
+    if ('unavailable' in parsed && parsed.unavailable === true) {
+      return [];
+    }
+    if (!('uris' in parsed) || !Array.isArray(parsed.uris) ||
+        !parsed.uris.every((uri) => typeof uri === 'string' && uri.length > 0)) {
+      throw new TypeError('Published feed order Redis script returned invalid URIs');
+    }
+    return parsed.uris;
+  }
+  return await redis.zrevrange(sortedSetKey, 0, maxPosts - 1);
+}
 
 let currentSnapshotPromises = new Map<string, Promise<FeedSnapshot | null>>();
 let currentMemorySnapshotCache = new Map<string, { expiresAtMs: number; generation: string; snapshot: FeedSnapshot }>();
@@ -239,12 +329,24 @@ async function createCurrentSnapshot(spec: FeedSnapshotSpec): Promise<FeedSnapsh
   for (let attempt = 0; attempt < 2; attempt++) {
     const generation = await readCurrentGeneration(spec);
     let usedLastKnownGood = false;
-    let rankedUris = await redis.zrevrange(spec.sortedSetKey, 0, spec.maxPosts - 1);
+    let rankedUris = await readPublishedOrder(
+      spec.sortedSetKey,
+      spec.orderedListKey,
+      spec.countKey,
+      spec.schemaVersionKey,
+      spec.maxPosts
+    );
     if (rankedUris.length === 0) {
       if (spec.fallbackSortedSetKey === null) {
         return null;
       }
-      rankedUris = await redis.zrevrange(spec.fallbackSortedSetKey, 0, spec.maxPosts - 1);
+      rankedUris = await readPublishedOrder(
+        spec.fallbackSortedSetKey,
+        spec.fallbackOrderedListKey,
+        spec.fallbackCountKey,
+        spec.fallbackSchemaVersionKey,
+        spec.maxPosts
+      );
       if (rankedUris.length === 0) {
         return null;
       }
@@ -341,9 +443,25 @@ async function getFeedSnapshotByIdForSpec(
 }
 
 function feedSnapshotSpecForCommunity(community: FeedCommunity): FeedSnapshotSpec {
+  const isPublishedFeed = community.redis.current === CURRENT_FEED_PUBLICATION_KEYS.sortedSet &&
+    community.redis.order === CURRENT_FEED_PUBLICATION_KEYS.order &&
+    community.redis.count === CURRENT_FEED_PUBLICATION_KEYS.metadata.totalPublishedItems &&
+    community.redis.lastKnownGood === LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.sortedSet &&
+    community.redis.lastKnownGoodOrder === LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.order &&
+    community.redis.lastKnownGoodCount === LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.metadata.totalPublishedItems;
   return {
     sortedSetKey: community.redis.current,
+    orderedListKey: community.redis.order,
+    countKey: community.redis.count,
+    schemaVersionKey: isPublishedFeed
+      ? CURRENT_FEED_PUBLICATION_KEYS.metadata.schemaVersion
+      : null,
     fallbackSortedSetKey: community.redis.lastKnownGood,
+    fallbackOrderedListKey: community.redis.lastKnownGoodOrder,
+    fallbackCountKey: community.redis.lastKnownGoodCount,
+    fallbackSchemaVersionKey: isPublishedFeed
+      ? LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.metadata.schemaVersion
+      : null,
     fallbackMetricKey: community.redis.lastKnownGoodFallbackTotal,
     currentSnapshotKey: community.redis.currentSnapshot,
     generationKey: community.redis.snapshotGeneration,
@@ -405,7 +523,13 @@ export async function invalidateCommunityFeedSnapshot(community: FeedCommunity):
 
 export const __snapshotCacheKeysForTests = {
   currentFeedKey: COMMUNITY_GOV_REDIS_KEYS.current,
+  currentOrderKey: COMMUNITY_GOV_REDIS_KEYS.order,
+  currentCountKey: COMMUNITY_GOV_REDIS_KEYS.count,
+  currentSchemaVersionKey: CURRENT_FEED_PUBLICATION_KEYS.metadata.schemaVersion,
   lastKnownGoodFeedKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGood,
+  lastKnownGoodOrderKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodOrder,
+  lastKnownGoodCountKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodCount,
+  lastKnownGoodSchemaVersionKey: LAST_KNOWN_GOOD_FEED_PUBLICATION_KEYS.metadata.schemaVersion,
   lastKnownGoodFallbackTotalKey: COMMUNITY_GOV_REDIS_KEYS.lastKnownGoodFallbackTotal,
   currentSnapshotKey: CURRENT_FEED_SNAPSHOT_KEY,
   currentGenerationKey: CURRENT_FEED_GENERATION_KEY,

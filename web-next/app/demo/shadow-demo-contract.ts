@@ -118,6 +118,7 @@ export const SHADOW_DEMO_ISOLATION_CONTRACT = {
   stateBackend: 'redis_only_demo_namespace',
   redisPrefixes: [
     'demo:session:',
+    'demo:session-nonce:',
     'demo:sessions:',
     'demo:corpus:',
     'demo:corpus:current:v4:',

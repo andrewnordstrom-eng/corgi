@@ -52,6 +52,36 @@ afterEach(() => {
 })
 
 describe("HTTP shadow demo client", () => {
+  it.each(["created", "reviewer_voted", "synthetic_voters_ran", "epoch_advanced"] as const)("restores authoritative %s state using only GET requests", async (phase) => {
+    const advanced = phase === "epoch_advanced"
+    const hasAgents = advanced || phase === "synthetic_voters_ran"
+    const currentId = advanced ? "epoch-2" : "epoch-1"
+    const votes = hasAgents ? syntheticVotes("epoch-1") : []
+    const epochs = [epoch("epoch-1", 1, BASE_WEIGHTS, 0)]
+    if (advanced) epochs.push(epoch("epoch-2", 2, NEXT_WEIGHTS, 25, "epoch-1"))
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonEnvelope(sessionPayload(phase, currentId, epochs, votes, hasAgents && !advanced ? aggregate(NEXT_WEIGHTS, 25, 2) : null)))
+      .mockResolvedValueOnce(jsonEnvelope(feedPayload(currentId, [1, 2])))
+    vi.stubGlobal("fetch", fetchMock)
+    const response = await createHttpShadowDemoClient().getSession(SESSION_ID, new AbortController().signal)
+    expect(response.payload.session.id).toBe(SESSION_ID)
+    expect(response.payload.currentEpoch.id).toBe(currentId)
+    expect(response.payload.agentVotes).toHaveLength(hasAgents ? 24 : 0)
+    expect(response.payload.agentVotes.every((vote) => vote.epochId === "epoch-1")).toBe(true)
+    expect(response.payload.agents.reduce((sum, agent) => sum + agent.voterCount, 0)).toBe(24)
+    expect(response.payload.pendingAggregate?.voteSummary.totalVotes ?? 0).toBe(hasAgents ? 25 : 0)
+    expect(response.payload.nextRecommendedAction).toBe(phase === "created" ? "cast_reviewer_vote" : phase === "reviewer_voted" ? "run_agent_votes" : phase === "synthetic_voters_ran" ? "advance_epoch" : "select_post")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls.every((call) => call[1]?.method === "GET")).toBe(true)
+  })
+
+  it("refuses a recovery response for another session before fetching its feed", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonEnvelope(sessionPayload("created", "epoch-1", [epoch("epoch-1", 1, BASE_WEIGHTS, 0)])))
+    vi.stubGlobal("fetch", fetchMock)
+    await expect(createHttpShadowDemoClient().getSession("other-session", new AbortController().signal)).rejects.toThrow(/different session/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it("keeps novel backend hidden reasons withheld behind a generic row", () => {
     expect(hiddenReason("Withheld by a future public-view rule")).toBe("deleted_or_unavailable")
   })
@@ -308,6 +338,10 @@ describe("HTTP shadow demo client", () => {
       clientNonce: "nonce",
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const [input, init] of fetchMock.mock.calls) {
+      expect(requestPath(input)).toMatch(/^\/api\/demo\/v4\//)
+      expect(new Headers(init?.headers).has("x-csrf-token")).toBe(false)
+    }
   })
 
   it("rejects malformed community, provenance, topic, and session identity fields", () => {
@@ -372,6 +406,24 @@ describe("HTTP shadow demo client", () => {
       new AbortController().signal,
     )).rejects.toThrow("The shadow epoch changed before this ballot was accepted.")
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("treats duplicate session creation nonce conflicts as non-retryable", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      error: "DemoConflictError",
+      message: "Session creation nonce has already been used",
+    }), { status: 409, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(createHttpShadowDemoClient().createSession(
+      { communityId: "community_gov", scenarioId: "guided_default", clientNonce: "duplicate-nonce", mode: "guided" },
+      new AbortController().signal,
+    )).rejects.toThrow("Session creation nonce has already been used")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      communityId: "community_gov",
+      clientNonce: "duplicate-nonce",
+    })
   })
 
   it("maps withheld posts with their adopted rule and support", async () => {

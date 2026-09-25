@@ -250,11 +250,63 @@ describe('admin governance routes', () => {
     await app.close();
   });
 
+  describe.each([
+    { method: 'PATCH' as const, url: '/governance/content-rules', payload: { excludeKeywords: ['blocked'] }, action: 'admin_rules_override' },
+    { method: 'POST' as const, url: '/governance/content-rules/keyword', payload: { type: 'exclude', keyword: 'blocked' }, action: 'admin_keyword_added' },
+    { method: 'DELETE' as const, url: '/governance/content-rules/keyword', payload: { type: 'exclude', keyword: 'spam' }, action: 'admin_keyword_removed' },
+    { method: 'PATCH' as const, url: '/governance/weights', payload: { recency: 0.6 }, action: 'admin_weights_override' },
+  ])('C4 durable override $action', ({ method, url, payload, action }) => {
+    it('queues and audits generation before commit and trigger', async () => {
+      clientQueryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FOR UPDATE')) return { rows: [epochRow()] };
+        if (sql.includes('INSERT INTO governance_rescore_requests')) return { rows: [{ requested_generation: '9' }] };
+        return { rows: [] };
+      });
+      const app = Fastify();
+      registerGovernanceRoutes(app);
+      try {
+        const response = await app.inject({ method, url, payload });
+        expect(response.statusCode).toBe(200);
+        const calls = clientQueryMock.mock.calls;
+        const queueIndex = calls.findIndex(([sql]) => String(sql).includes('INSERT INTO governance_rescore_requests'));
+        const auditIndex = calls.findIndex(([sql]) => String(sql).includes(`VALUES ('${action}'`));
+        const commitIndex = calls.findIndex(([sql]) => sql === 'COMMIT');
+        expect(queueIndex).toBeGreaterThan(0);
+        expect(auditIndex).toBeGreaterThan(queueIndex);
+        expect(commitIndex).toBeGreaterThan(auditIndex);
+        expect(calls.filter(([sql]) => String(sql).includes('INSERT INTO governance_rescore_requests'))).toHaveLength(1);
+        expect(JSON.parse(calls[auditIndex][1][2])).toMatchObject({ rescore_generation: 9 });
+        expect(tryTriggerManualScoringRunMock).toHaveBeenCalledTimes(1);
+        expect(tryTriggerManualScoringRunMock.mock.invocationCallOrder[0]).toBeGreaterThan(clientQueryMock.mock.invocationCallOrder[commitIndex]);
+      } finally { await app.close(); }
+    });
+
+    it('rolls back enqueue failure without commit or scoring trigger', async () => {
+      clientQueryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FOR UPDATE')) return { rows: [epochRow()] };
+        if (sql.includes('INSERT INTO governance_rescore_requests')) throw new Error('C4 queue unavailable');
+        return { rows: [] };
+      });
+      const app = Fastify();
+      registerGovernanceRoutes(app);
+      try {
+        const response = await app.inject({ method, url, payload });
+        expect(response.statusCode).toBe(500);
+        expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+        expect(clientQueryMock).not.toHaveBeenCalledWith('COMMIT');
+        expect(clientQueryMock.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO governance_audit_log'))).toBe(false);
+        expect(requestFullRescoreMock).not.toHaveBeenCalled();
+        expect(tryTriggerManualScoringRunMock).not.toHaveBeenCalled();
+      } finally { await app.close(); }
+    });
+  });
+
   it('normalizes weight override and triggers rescore', async () => {
     clientQueryMock
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [epochRow()] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ requested_generation: '1' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -274,7 +326,7 @@ describe('admin governance routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json();
+    const body = response.json<{ weights: Record<string, number>; rescoreTriggered: boolean }>();
     const sum = Object.values(body.weights).reduce((acc: number, value: number) => acc + value, 0);
     expect(sum).toBeCloseTo(1, 6);
     expect(body.rescoreTriggered).toBe(true);

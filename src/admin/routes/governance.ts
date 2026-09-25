@@ -1239,6 +1239,8 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
         [JSON.stringify(toContentRulesPayload(updatedRules)), epoch.id]
       );
 
+      const rescoreGeneration = await enqueuePolicyRescore(client, epoch.id);
+
       await client.query(
         `INSERT INTO governance_audit_log (action, actor_did, epoch_id, details)
          VALUES ('admin_rules_override', $1, $2, $3)`,
@@ -1246,6 +1248,7 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
           adminDid,
           epoch.id,
           JSON.stringify({
+            rescore_generation: rescoreGeneration,
             old_content_rules: toContentRulesPayload(previousRules),
             new_content_rules: toContentRulesPayload(updatedRules),
           }),
@@ -1364,6 +1367,8 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
         [JSON.stringify(toContentRulesPayload(nextRules)), epoch.id]
       );
 
+      const rescoreGeneration = await enqueuePolicyRescore(client, epoch.id);
+
       await client.query(
         `INSERT INTO governance_audit_log (action, actor_did, epoch_id, details)
          VALUES ('admin_keyword_added', $1, $2, $3)`,
@@ -1371,6 +1376,7 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
           adminDid,
           epoch.id,
           JSON.stringify({
+            rescore_generation: rescoreGeneration,
             type,
             keyword,
             old_content_rules: toContentRulesPayload(previousRules),
@@ -1494,6 +1500,8 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
         [JSON.stringify(toContentRulesPayload(nextRules)), epoch.id]
       );
 
+      const rescoreGeneration = await enqueuePolicyRescore(client, epoch.id);
+
       await client.query(
         `INSERT INTO governance_audit_log (action, actor_did, epoch_id, details)
          VALUES ('admin_keyword_removed', $1, $2, $3)`,
@@ -1501,6 +1509,7 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
           adminDid,
           epoch.id,
           JSON.stringify({
+            rescore_generation: rescoreGeneration,
             type,
             keyword,
             old_content_rules: toContentRulesPayload(previousRules),
@@ -1615,6 +1624,8 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
         ]
       );
 
+      const rescoreGeneration = await enqueuePolicyRescore(client, epoch.id);
+
       await client.query(
         `INSERT INTO governance_audit_log (action, actor_did, epoch_id, details)
          VALUES ('admin_weights_override', $1, $2, $3)`,
@@ -1622,6 +1633,7 @@ export function registerGovernanceRoutes(app: FastifyInstance): void {
           adminDid,
           epoch.id,
           JSON.stringify({
+            rescore_generation: rescoreGeneration,
             old_weights: previousWeights,
             new_weights: normalizedWeights,
             override: parseResult.data,

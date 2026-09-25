@@ -97,6 +97,9 @@ export interface ShadowDemoSessionResponse {
   readonly previousEpoch: ShadowDemoEpoch | null
   readonly feed: ShadowDemoFeed
   readonly nextRecommendedAction: ShadowDemoAction
+  readonly agents: readonly ShadowDemoAgent[]
+  readonly agentVotes: readonly ShadowDemoVote[]
+  readonly pendingAggregate: ShadowDemoAggregate | null
 }
 
 export interface ShadowDemoSession {

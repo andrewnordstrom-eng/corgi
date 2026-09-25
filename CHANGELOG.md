@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Anonymous, rate-limited live-feed snapshot API with publication-bound ranks, component weights, score math, pinned-announcement placement, and conditional caching.
 - Public, rate-limited `/api/demo/*` shadow-governance sessions with production-sourced score components, deterministic synthetic voters, isolated Redis state, reranked feeds, and inspectable receipts.
 - Product-grade `web-next` landing, how-it-works, and no-login shadow-demo flows with shared Corgi/Bluesky presentation patterns, responsive product pages, and inspectable multi-epoch ranking receipts.
 - Topic scoring engine: winkNLP-based topic classification at ingestion time
@@ -20,6 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Dedicated support guide (`SUPPORT.md`) and issue-template contact links for support/security routing
 
 ### Changed
+- Require Node.js ^22.19.0 across application, CLI, SDK and example packages; Node 20 is no longer supported. Repository builds pin npm 11.19.1, while distributed CLI/SDK packages do not require an exact npm version.
 - Host identity adoption now validates existing systemd overrides and replaces the inherited Docker Compose startup hook with a bounded, read-only dependency check, preserving watchdog/routing settings and guarded rollback.
 - Protected production configuration against replacement through writable application directories; host adoption now migrates configuration with guarded recovery, and the dedicated service accepts its own readiness/watchdog helper notifications.
 - Updated vulnerable dependencies across shipped workspaces without adding audit exceptions. Numeric `TRUST_PROXY` hop counts now fail startup with migration guidance; use an explicit trusted proxy IP/CIDR or `loopback` before deploying this update.

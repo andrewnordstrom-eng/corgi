@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { Pool } from 'pg';
+import { createDisplayProjector } from '../src/demo/corpus.js';
 import { ShadowDemoService } from '../src/demo/service.js';
-import { MemoryDemoStore } from '../src/demo/store.js';
+import { MemoryDemoStore, type DemoSessionMutation } from '../src/demo/store.js';
 import { registerShadowDemoRoutes, registerShadowDemoV4Routes } from '../src/demo/routes.js';
 import type { ShadowDemoCorpus } from '../src/demo/types.js';
 import { buildTestApp } from './helpers/index.js';
@@ -27,6 +29,7 @@ describe('shadow demo v4 route contract', () => {
     const app = buildTestApp();
     try {
       const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
         store: new MemoryDemoStore(),
         loadCorpus: async () => corpus(),
         now: () => NOW,
@@ -40,6 +43,7 @@ describe('shadow demo v4 route contract', () => {
       payload: { communityId: 'community_gov', clientNonce: 'v3-community-gov' },
     });
     expect(wrongContract.statusCode).toBe(400);
+    expect(wrongContract.headers['cache-control']).toBe('no-store');
     expect(wrongContract.json().message).toContain('only on the v4');
 
     const created = await app.inject({
@@ -177,6 +181,7 @@ describe('shadow demo v4 route contract', () => {
       duplicateCatalogCorpus.topicCatalog = [...TOPICS];
       duplicateCatalogCorpus.topicCatalog[25] = { ...TOPICS[0] };
       const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
         store: new MemoryDemoStore(),
         loadCorpus: async () => duplicateCatalogCorpus,
         now: () => NOW,
@@ -188,6 +193,7 @@ describe('shadow demo v4 route contract', () => {
         payload: { communityId: 'community_gov', clientNonce: 'v4-duplicate-topics' },
       });
       expect(created.statusCode).toBe(200);
+      expect(created.headers['cache-control']).toBe('no-store');
       const session = created.json().payload.session;
       const vote = await app.inject({
         method: 'POST',
@@ -203,6 +209,45 @@ describe('shadow demo v4 route contract', () => {
       await app.close();
     }
   });
+
+  for (const crossing of [false, true]) {
+    it(`keeps fixture baseline, movement and receipts consistent for ${crossing ? 'crossing' : 'unchanged'} order`, async () => {
+      const fixture = corpus();
+      fixture.items = fixture.items.slice(0, 2).map((entry, index) => ({
+        ...entry, publishedRank: undefined, publishedScore: undefined, publicationAdjustment: undefined,
+        rawScores: { recency: index === 0 ? 1 : 0, engagement: index === 1 ? 1 : 0, bridging: 0, source_diversity: 0, relevance: 1 },
+      }));
+      fixture.baseWeights = { recency: 0.2, engagement: 0.8, bridging: 0, source_diversity: 0, relevance: 0 };
+      fixture.health = { ...fixture.health, status: 'degraded', source: 'fixture_fallback' };
+      const store = new MemoryDemoStore();
+      const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])), store, loadCorpus: async () => fixture, now: () => NOW });
+      const created = await service.createSession({ communityId: 'community_gov', clientNonce: `oracle-${crossing}` });
+      const session = created.payload.session;
+      const baseline = await service.getFeed({ sessionId: session.sessionId, epochId: session.currentEpochId, limit: 12 });
+      expect(baseline.payload.posts.map((post) => [post.post.kind === 'public_post' ? post.post.uri : null, post.rank, post.score])).toEqual([
+        [postUri(2), 1, 0.8], [postUri(1), 2, 0.2],
+      ]);
+      const weights = crossing ? { ...fixture.baseWeights, recency: 0.8, engagement: 0.2 } : fixture.baseWeights;
+      await service.castVote({ sessionId: session.sessionId, baseEpochId: session.currentEpochId, weights, topicIntent: fixture.baseTopicIntent, idempotencyKey: 'oracle-vote' });
+      await service.runSyntheticVoters({ sessionId: session.sessionId, baseEpochId: session.currentEpochId, idempotencyKey: 'oracle-voters' });
+      // Controlled arithmetic fixture: keep the valid25 voter identities, set a known unanimous policy.
+      const stored = await store.readSession(session.sessionId);
+      if (stored === null) throw new Error('Expected stored arithmetic fixture');
+      stored.votes = stored.votes.map((vote) => ({ ...vote, weights, topicIntent: fixture.baseTopicIntent }));
+      const advanced = await service.advanceEpoch({ sessionId: session.sessionId, fromEpochId: session.currentEpochId, idempotencyKey: 'oracle-advance' });
+      const feed = await service.getFeed({ sessionId: session.sessionId, epochId: advanced.payload.session.currentEpochId, limit: 12 });
+      expect(feed.payload.posts.map((post) => [post.post.kind === 'public_post' ? post.post.uri : null, post.previousRank, post.movement])).toEqual(crossing
+        ? [[postUri(1), 2, 1], [postUri(2), 1, -1]]
+        : [[postUri(2), 1, 0], [postUri(1), 2, 0]]);
+      for (const post of feed.payload.posts) {
+        if (post.post.kind !== 'public_post') throw new Error('Expected public arithmetic fixture');
+        const receipt = await service.getReceipt({ sessionId: session.sessionId, epochId: advanced.payload.session.currentEpochId, postUri: post.post.uri });
+        expect(receipt.payload.receipt.score).toBeCloseTo(post.rank === 1 ? 0.8 : 0.2, 12);
+        expect(receipt.payload.receipt.previousRank).toBe(post.previousRank);
+      }
+    });
+  }
 
   it('preserves the baseline adjustment and recomputes URL dedup once in shadow epochs', async () => {
     const adjustedCorpus = corpus();
@@ -220,6 +265,7 @@ describe('shadow demo v4 route contract', () => {
       ).score * adjustment;
     }
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => adjustedCorpus,
       now: () => NOW,
@@ -280,6 +326,7 @@ describe('shadow demo v4 route contract', () => {
       target.topicVector = { 'science-research': 0.1 };
     }
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => floorCorpus,
       now: () => NOW,
@@ -313,6 +360,220 @@ describe('shadow demo v4 route contract', () => {
     });
 
     expect(shadowFeed.payload.posts).toEqual([]);
+  });
+});
+
+describe('current display projection over a frozen demo cohort', () => {
+  for (const contentRulesEnabled of [false, true]) {
+    it(`projects only returned public URIs with content rules ${contentRulesEnabled ? 'enabled' : 'disabled'}`, async () => {
+      const frozen = corpus();
+      // Rank one is last in storage order, so unrelated earlier items must not consume hydration budget.
+      frozen.items.reverse();
+      const excluded = frozen.items.find((entry) => entry.postUri === postUri(2));
+      if (!excluded || excluded.displayPost.kind !== 'public_post') throw new Error('Expected excluded public fixture');
+      excluded.displayPost.text = 'boundedprojectionmarker';
+      const store = new MemoryDemoStore();
+      let deny = false;
+      const projectDisplay = vi.fn(async (_corpus: ShadowDemoCorpus, items: readonly ShadowDemoCorpus['items'][number][]) => {
+        const display = new Map(items.map((item) => [item.postUri, item.displayPost]));
+        if (deny) {
+          display.delete(postUri(1)); // Unknown current visibility must also fail closed.
+          if (display.has(postUri(2))) display.set(postUri(2), { kind: 'hidden_post', reason: 'Current synthetic denial' });
+        }
+        return display;
+      });
+      const service = new ShadowDemoService({ store, loadCorpus: async () => frozen, now: () => NOW, contentRulesEnabled, projectDisplay });
+      const created = await service.createSession({ communityId: 'community_gov', clientNonce: `bounded-projection-${contentRulesEnabled}` });
+      const state = await store.readSession(created.sessionId);
+      if (!state) throw new Error('Expected stored projection fixture');
+      state.epochs[0].aggregate.contentRules = {
+        enabled: true, threshold: 8, electorate: 25, adoptedExcludeKeywords: ['boundedprojectionmarker'],
+        support: [{ keyword: 'boundedprojectionmarker', supportCount: 25, adopted: true }],
+      };
+      const storedBefore = JSON.stringify(state);
+      projectDisplay.mockClear();
+      const visible = await service.getFeed({ sessionId: created.sessionId, epochId: null, limit: 1 });
+      const expectedUris = contentRulesEnabled ? [postUri(1), postUri(2)].sort() : [postUri(1)];
+      expect(projectDisplay).toHaveBeenCalledOnce();
+      expect(projectDisplay.mock.calls[0][1].map((item) => item.postUri).sort()).toEqual(expectedUris);
+      expect(visible.payload.posts.map((row) => [row.rank, row.post.kind === 'public_post' ? row.post.uri : null])).toEqual([[1, postUri(1)]]);
+      if (contentRulesEnabled) expect(visible.payload.withheldPosts?.map((row) => row.post.kind === 'public_post' ? row.post.uri : null)).toEqual([postUri(2)]);
+      else expect(visible.payload.withheldPosts).toBeUndefined();
+      deny = true;
+      projectDisplay.mockClear();
+      const hidden = await service.getFeed({ sessionId: created.sessionId, epochId: null, limit: 1 });
+      expect(projectDisplay.mock.calls[0][1].map((item) => item.postUri).sort()).toEqual(expectedUris);
+      expect(hidden.payload.posts[0]).toMatchObject({ rank: 1, score: null, rawScores: null, weightedComponents: null, post: { kind: 'hidden_post' } });
+      expect(JSON.stringify(hidden.payload.posts)).not.toContain(postUri(1));
+      if (contentRulesEnabled) {
+        expect(hidden.payload.withheldPosts?.[0].post.kind).toBe('hidden_post');
+        expect(JSON.stringify(hidden.payload.withheldPosts)).not.toContain(postUri(2));
+      }
+      expect(hidden.payload.corpusProvenance).toEqual(visible.payload.corpusProvenance);
+      expect(JSON.stringify(await store.readSession(created.sessionId))).toBe(storedBefore);
+    });
+  }
+
+  for (const change of ['missing', 'hidden', 'cid', 'local-denial', 'local-failure', 'legacy-metadata'] as const) {
+    it(`withholds ${change} after creation and shared-cache reuse without changing ranking inputs`, async () => {
+      const frozen = corpus();
+      frozen.items = frozen.items.map((entry, index) => ({
+        ...entry,
+        reviewedCid: entry.displayPost.kind === 'public_post' ? entry.displayPost.cid : null,
+        displayPost: entry.displayPost.kind === 'public_post' ? {
+          ...entry.displayPost,
+          text: index < 2 ? 'calibrationmarker specific content' : entry.displayPost.text,
+        } : entry.displayPost,
+      }));
+      let changed = false;
+      const deniedUri = frozen.items[0].postUri;
+      const query = vi.fn().mockImplementation(async (config: { values: [string[], (string | null)[]]; query_timeout: number }) => {
+        expect(config.query_timeout).toBe(1000);
+        if (changed && change === 'local-failure') throw new Error('synthetic local lookup failure');
+        return { rows: config.values[0].map((uri) => ({ uri, denied: changed && change === 'local-denial' && uri === deniedUri })) };
+      });
+      const projectDisplay = createDisplayProjector({
+        dbPool: { query } as unknown as Pick<Pool, 'query'>,
+        fetchFn: async (url, init) => {
+          expect(init.credentials).toBe('omit');
+          expect(init.redirect).toBe('manual');
+          expect(init.cache).toBe('no-store');
+          const uris = new URL(url).searchParams.getAll('uris');
+          expect(uris.length).toBeLessThanOrEqual(25);
+          const posts = uris.flatMap((uri) => {
+            const entry = frozen.items.find((candidate) => candidate.postUri === uri);
+            if (!entry || entry.displayPost.kind !== 'public_post') throw new Error('Unexpected fixture URI');
+            const post = entry.displayPost;
+            if (changed && change === 'missing' && uri === deniedUri) return [];
+            return [{ uri, cid: changed && change === 'cid' && uri === deniedUri ? 'changed-cid' : post.cid,
+              author: { did: post.authorDid, handle: post.authorHandle, displayName: post.authorDisplayName },
+              record: { text: post.text, createdAt: post.createdAt }, indexedAt: post.indexedAt,
+              labels: changed && change === 'hidden' && uri === deniedUri ? [{ val: '!hide' }] : [],
+            }];
+          });
+          return { ok: true, status: 200, text: async () => JSON.stringify({ posts }) };
+        },
+      });
+      const store = new MemoryDemoStore();
+      const loadCorpus = vi.fn(async () => frozen);
+      const service = new ShadowDemoService({ store, loadCorpus, now: () => NOW, contentRulesEnabled: true, projectDisplay });
+      const created = await service.createSession({ communityId: 'community_gov', clientNonce: `display-${change}` });
+      const sessionId = created.payload.session.sessionId;
+      const before = await service.getFeed({ sessionId, epochId: null, limit: 40 });
+      expect(before.payload.posts[0].post.kind).toBe('public_post');
+      expect(created.payload.session.suggestedExcludeKeywords).toContainEqual({ keyword: 'calibrationmarker', matchCount: 2 });
+      if (change === 'legacy-metadata') {
+        const state = await store.readSession(sessionId);
+        if (!state) throw new Error('Expected fixture session');
+        delete state.corpus.items[0].reviewedCid;
+        delete frozen.items[0].reviewedCid;
+        await store.writeSharedCorpus('community_gov', frozen, 3600);
+      }
+      const stateBefore = JSON.stringify(await store.readSession(sessionId));
+      changed = true;
+      const after = await service.getFeed({ sessionId, epochId: null, limit: 40 });
+      expect(after.payload.posts[0]).toEqual({ rank: before.payload.posts[0].rank, previousRank: null, movement: null,
+        score: null, rawScores: null, weightedComponents: null, componentScore: null, publicationAdjustment: null,
+        post: { kind: 'hidden_post', reason: expect.any(String) } });
+      expect(after.payload.posts.map(({ rank, previousRank, movement }) => ({ rank, previousRank, movement })))
+        .toEqual(before.payload.posts.map(({ rank, previousRank, movement }) => ({ rank, previousRank, movement })));
+      expect(after.payload.corpusProvenance).toEqual(before.payload.corpusProvenance);
+      expect(JSON.stringify(await store.readSession(sessionId))).toBe(stateBefore);
+      await expect(service.getReceipt({ sessionId, epochId: null, postUri: deniedUri })).rejects.toThrow('Receipt is unavailable');
+      const current = await service.getSession(sessionId);
+      expect(current.payload.session.suggestedExcludeKeywords?.some((entry) => entry.keyword === 'calibrationmarker')).toBe(false);
+      const reused = await service.createSession({ communityId: 'community_gov', clientNonce: `reused-${change}` });
+      const reusedFeed = await service.getFeed({ sessionId: reused.payload.session.sessionId, epochId: null, limit: 40 });
+      expect(reusedFeed.payload.posts[0].post.kind).toBe('hidden_post');
+      expect(loadCorpus).toHaveBeenCalledTimes(1);
+      if (change !== 'legacy-metadata') {
+        changed = false;
+        expect((await service.getFeed({ sessionId, epochId: null, limit: 40 })).payload.posts[0].post.kind).toBe('public_post');
+      }
+    });
+  }
+
+  it('projects suggestions after release for both committed and replayed mutations without rewriting ballots', async () => {
+    class LockObservedStore extends MemoryDemoStore {
+      held = false;
+      commits = 0;
+      override async acquireSessionLock(sessionId: string, token: string, ttl: number): Promise<boolean> {
+        const acquired = await super.acquireSessionLock(sessionId, token, ttl); this.held = acquired; return acquired;
+      }
+      override async releaseSessionLock(sessionId: string, token: string): Promise<void> {
+        await super.releaseSessionLock(sessionId, token); this.held = false;
+      }
+      override async commitSessionMutation<T>(mutation: DemoSessionMutation<T>): Promise<boolean> {
+        this.commits += 1; return super.commitSessionMutation<T>(mutation);
+      }
+    }
+    const store = new LockObservedStore();
+    const frozen = corpus();
+    frozen.items = frozen.items.map((entry, i) => ({ ...entry, displayPost: entry.displayPost.kind === 'public_post'
+      ? { ...entry.displayPost, text: i < 2 ? 'calibrationmarker' : entry.displayPost.text } : entry.displayPost }));
+    let hidden = false;
+    const service = new ShadowDemoService({ store, loadCorpus: async () => frozen, now: () => NOW, contentRulesEnabled: true,
+      projectDisplay: async (_corpus, items) => {
+        expect(store.held).toBe(false);
+        return new Map(items.map((entry) => [entry.postUri, hidden ? { kind: 'hidden_post' as const, reason: 'synthetic current denial' } : entry.displayPost]));
+      },
+    });
+    const session = (await service.createSession({ communityId: 'community_gov', clientNonce: 'projection-release' })).payload.session;
+    const request = { sessionId: session.sessionId, baseEpochId: session.currentEpochId, weights: frozen.baseWeights,
+      topicIntent: frozen.baseTopicIntent, excludeKeywords: ['calibrationmarker'], idempotencyKey: 'fixed-vote' };
+    const first = await service.castVote(request);
+    expect(first.payload.session.suggestedExcludeKeywords?.length).toBeGreaterThan(0);
+    hidden = true;
+    const replay = await service.castVote(request);
+    expect(replay.payload.session.suggestedExcludeKeywords).toEqual([]);
+    expect(replay.payload.session.votes).toEqual(first.payload.session.votes);
+    expect(store.commits).toBe(1);
+  });
+
+  it('returns committed mutation with an explicit empty-suggestions warning when advisory projection fails', async () => {
+    class CommitCountingStore extends MemoryDemoStore {
+      commits = 0;
+      override async commitSessionMutation<T>(mutation: DemoSessionMutation<T>): Promise<boolean> {
+        this.commits += 1;
+        return super.commitSessionMutation(mutation);
+      }
+    }
+    const store = new CommitCountingStore();
+    const frozen = corpus();
+    let failProjection = false;
+    const service = new ShadowDemoService({
+      store,
+      loadCorpus: async () => frozen,
+      now: () => NOW,
+      contentRulesEnabled: true,
+      projectDisplay: async (_corpus, items) => {
+        if (failProjection) throw new Error('synthetic projection failure');
+        return new Map(items.map((item) => [item.postUri, item.displayPost]));
+      },
+    });
+    const session = (await service.createSession({ communityId: 'community_gov', clientNonce: 'projection-failure' }))
+      .payload.session;
+    const request = {
+      sessionId: session.sessionId,
+      baseEpochId: session.currentEpochId,
+      weights: frozen.baseWeights,
+      topicIntent: frozen.baseTopicIntent,
+      idempotencyKey: 'projection-failure-vote',
+    };
+    failProjection = true;
+
+    const committed = await service.castVote(request);
+    expect(committed.payload.session.votes).toHaveLength(1);
+    expect(committed.payload.session.suggestedExcludeKeywords).toEqual([]);
+    expect(committed.warnings).toContainEqual({
+      code: 'content_rule_suggestions_unavailable',
+      message: 'Content-rule suggestions are temporarily unavailable; the session change was saved.',
+      severity: 'warning',
+    });
+    const replay = await service.castVote(request);
+    expect(replay.payload.session.votes).toEqual(committed.payload.session.votes);
+    expect(replay.payload.session.suggestedExcludeKeywords).toEqual([]);
+    expect(store.commits).toBe(1);
   });
 });
 

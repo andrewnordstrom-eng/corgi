@@ -8,6 +8,7 @@ import {
   DemoStoreUnavailableError,
   RedisDemoStore,
   MemoryDemoStore,
+  demoSharedCorpusIdentity,
 } from '../src/demo/store.js';
 import type { ShadowDemoSessionState } from '../src/demo/types.js';
 
@@ -135,7 +136,26 @@ describe('Redis shadow demo store', () => {
     const store = new RedisDemoStore({ get } as unknown as Redis);
 
     await expect(store.readSharedCorpus('community_gov')).resolves.toBeNull();
-    expect(get).toHaveBeenCalledWith('demo:corpus:current:v4:community_gov');
+    expect(get).toHaveBeenCalledWith(expect.stringMatching(/^demo:corpus:current:v4:community_gov:[a-f0-9]{64}$/));
+  });
+
+  it('binds corpus identity to manifest and visibility policy', () => {
+    const identity = demoSharedCorpusIdentity('community_gov', 'manifest-a', 'policy-a');
+    expect(demoSharedCorpusIdentity('community_gov', 'manifest-a', 'policy-a')).toBe(identity);
+    expect(demoSharedCorpusIdentity('community_gov', 'manifest-b', 'policy-a')).not.toBe(identity);
+    expect(demoSharedCorpusIdentity('community_gov', 'manifest-a', 'policy-b')).not.toBe(identity);
+  });
+
+  it('does not let a builder publish after losing corpus ownership', async () => {
+    const store = new MemoryDemoStore();
+    const corpus = storedSession().corpus;
+    await store.acquireCorpusBuildLock(corpus.communityId, 'old-owner', 100);
+    await store.releaseCorpusBuildLock(corpus.communityId, 'old-owner');
+    await store.acquireCorpusBuildLock(corpus.communityId, 'new-owner', 100);
+    await expect(store.commitSharedCorpus(corpus.communityId, 'old-owner', corpus, 60)).resolves.toBe(false);
+    await expect(store.readSharedCorpus(corpus.communityId)).resolves.toBeNull();
+    await expect(store.commitSharedCorpus(corpus.communityId, 'new-owner', corpus, 60)).resolves.toBe(true);
+    await expect(store.readSharedCorpus(corpus.communityId)).resolves.toEqual(corpus);
   });
 
   it('connects a cold lazy client before issuing its first store command', async () => {

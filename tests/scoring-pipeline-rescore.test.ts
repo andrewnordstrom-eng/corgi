@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   dbQueryMock,
@@ -71,7 +71,9 @@ import {
   requestFullRescore,
   __resetPipelineState,
 } from '../src/scoring/pipeline.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 import { buildEpochRow } from './helpers/index.js';
+import { logger } from '../src/lib/logger.js';
 
 let fencePendingGeneration: string | null = null;
 
@@ -84,6 +86,8 @@ function setupDefaultMocks() {
     del: pipelineDelMock.mockReturnThis(),
     expire: vi.fn().mockReturnThis(),
     zadd: pipelineZaddMock.mockReturnThis(),
+    rpush: vi.fn().mockReturnThis(),
+    hset: vi.fn().mockReturnThis(),
     set: pipelineSetMock.mockReturnThis(),
     exec: pipelineExecMock.mockResolvedValue([]),
   };
@@ -96,6 +100,9 @@ function setupDefaultMocks() {
     }
     if (sql.includes('UPDATE governance_rescore_requests')) {
       return Promise.resolve({ rows: [{ requested_generation: fencePendingGeneration ?? '1' }] });
+    }
+    if (sql.includes('FROM post_scores ps')) {
+      return Promise.resolve({ rows: [] });
     }
     return Promise.resolve({ rows: [] });
   });
@@ -119,26 +126,36 @@ async function runEmptyCycle(epochId = 2) {
   dbQueryMock
     .mockResolvedValueOnce({ rows: [makeEpochRow(epochId)] }) // getActiveEpoch
     .mockResolvedValueOnce({ rows: [] })                       // posts query
-    .mockResolvedValueOnce({ rows: [] })                       // writeToRedisFromDb
     .mockResolvedValueOnce({ rows: [] });                      // updateCurrentRunScope
   await runScoringPipeline();
 }
 
 async function runPublishedCycle(epochId = 2) {
+  clientQueryMock.mockImplementation((sql: string) => {
+    if (sql.includes('pending_rescore_generation')) {
+      return Promise.resolve({ rows: [{ pending_rescore_generation: fencePendingGeneration }] });
+    }
+    if (sql.includes('UPDATE governance_rescore_requests')) {
+      return Promise.resolve({ rows: [{ requested_generation: fencePendingGeneration ?? '1' }] });
+    }
+    if (sql.includes('FROM post_scores ps')) {
+      return Promise.resolve({
+        rows: [buildFeedPublicationRow({
+          post_uri: 'at://did:plc:author/app.bsky.feed.post/1',
+          total_score: 0.8,
+          author_did: 'did:plc:author',
+          bridging_score: 0.5,
+          engagement_score: 0.4,
+          embed_url: null,
+          text_length: 120,
+        })],
+      });
+    }
+    return Promise.resolve({ rows: [] });
+  });
   dbQueryMock
     .mockResolvedValueOnce({ rows: [makeEpochRow(epochId)] })
     .mockResolvedValueOnce({ rows: [] })
-    .mockResolvedValueOnce({
-      rows: [{
-        post_uri: 'at://did:plc:author/app.bsky.feed.post/1',
-        total_score: 0.8,
-        author_did: 'did:plc:author',
-        bridging_score: 0.5,
-        engagement_score: 0.4,
-        embed_url: null,
-        text_length: 120,
-      }],
-    })
     .mockResolvedValueOnce({ rows: [] })
     .mockResolvedValueOnce({ rows: [] });
   await runScoringPipeline();
@@ -151,11 +168,23 @@ function getPostsQueryMode(): 'full' | 'incremental' {
 }
 
 describe('periodic full rescore for recency decay', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     __resetPipelineState();
     fencePendingGeneration = null;
     vi.clearAllMocks();
     setupDefaultMocks();
+  });
+
+  it('C4 retires a published null-generation policy rescore without durable ACK', async () => {
+    requestFullRescore();
+    await runPublishedCycle();
+    const sql = clientQueryMock.mock.calls.map(([query]) => String(query));
+    expect(sql.filter((query) => query.includes('DELETE FROM post_score_components'))).toHaveLength(1);
+    expect(sql.filter((query) => query.includes('DELETE FROM post_scores'))).toHaveLength(1);
+    expect(sql.some((query) => query.includes('UPDATE governance_rescore_requests'))).toBe(false);
   });
 
   it('first run is always full mode', async () => {
@@ -354,7 +383,7 @@ describe('periodic full rescore for recency decay', () => {
   it('rejects publication and preserves a policy change requested during an in-flight run', async () => {
     await runEmptyCycle(2);
 
-    let releaseContentRules: ((value: { includeKeywords: string[]; excludeKeywords: string[] }) => void) | null = null;
+    let releaseContentRules!: (value: { includeKeywords: string[]; excludeKeywords: string[] }) => void;
     const pendingContentRules = new Promise<{ includeKeywords: string[]; excludeKeywords: string[] }>((resolve) => {
       releaseContentRules = resolve;
     });
@@ -373,7 +402,7 @@ describe('periodic full rescore for recency decay', () => {
       expect(getCurrentContentRulesMock).toHaveBeenCalled();
     });
     requestFullRescore();
-    releaseContentRules?.({ includeKeywords: [], excludeKeywords: [] });
+    releaseContentRules({ includeKeywords: [], excludeKeywords: [] });
     await expect(inFlightRun).rejects.toThrow(
       'Governance policy changed while epoch 2 scoring was in progress'
     );
@@ -447,13 +476,15 @@ describe('periodic full rescore for recency decay', () => {
     dbQueryMock.mockReset();
     setupDefaultMocks();
     fencePendingGeneration = '4';
-    dbQueryMock
-      .mockResolvedValueOnce({
-        rows: [{ ...makeEpochRow(2), pending_rescore_generation: '4' }],
-      })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [{
+    clientQueryMock.mockImplementation((sql: string) => {
+      if (sql.includes('pending_rescore_generation')) {
+        return Promise.resolve({ rows: [{ pending_rescore_generation: fencePendingGeneration }] });
+      }
+      if (sql.includes('UPDATE governance_rescore_requests')) {
+        return Promise.resolve({ rows: [{ requested_generation: fencePendingGeneration }] });
+      }
+      if (sql.includes('FROM post_scores ps')) {
+        return Promise.resolve({ rows: [buildFeedPublicationRow({
           post_uri: 'at://did:plc:author/app.bsky.feed.post/1',
           total_score: 0.8,
           author_did: 'did:plc:author',
@@ -461,8 +492,15 @@ describe('periodic full rescore for recency decay', () => {
           engagement_score: 0.4,
           embed_url: null,
           text_length: 120,
-        }],
+        })] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    dbQueryMock
+      .mockResolvedValueOnce({
+        rows: [{ ...makeEpochRow(2), pending_rescore_generation: '4' }],
       })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -489,10 +527,41 @@ describe('periodic full rescore for recency decay', () => {
     );
 
     expect(
-      dbQueryMock.mock.calls.some(([sql]) => String(sql).includes('FROM post_scores ps'))
+      clientQueryMock.mock.calls.some(([sql]) => String(sql).includes('FROM post_scores ps'))
     ).toBe(false);
     expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
     expect(clientReleaseMock).toHaveBeenCalledTimes(1);
+    expect(clientReleaseMock).toHaveBeenCalledWith();
+  });
+
+  it('preserves stale-generation failure and discards client when rollback fails', async () => {
+    fencePendingGeneration = '5';
+    const rollbackError = new Error('rollback transport failure');
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    clientQueryMock.mockImplementation((sql: string) => {
+      if (sql === 'ROLLBACK') return Promise.reject(rollbackError);
+      if (sql.includes('pending_rescore_generation')) {
+        return Promise.resolve({ rows: [{ pending_rescore_generation: '5' }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    dbQueryMock
+      .mockResolvedValueOnce({
+        rows: [{ ...makeEpochRow(2), pending_rescore_generation: '4' }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(runScoringPipeline()).rejects.toMatchObject({
+      name: 'ScoringPolicySupersededError',
+      message: 'Governance policy changed while epoch 2 scoring was in progress',
+    });
+
+    expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+    expect(clientReleaseMock).toHaveBeenCalledWith(true);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ rollbackError, epochId: 2, runId: expect.any(String) }),
+      'Scoring publication rollback failed; discarding PostgreSQL client'
+    );
   });
 
   it('rejects a routine run that started before a policy approval', async () => {
@@ -506,7 +575,7 @@ describe('periodic full rescore for recency decay', () => {
     );
 
     expect(
-      dbQueryMock.mock.calls.some(([sql]) => String(sql).includes('FROM post_scores ps'))
+      clientQueryMock.mock.calls.some(([sql]) => String(sql).includes('FROM post_scores ps'))
     ).toBe(false);
     expect(invalidateContentRulesCacheMock).not.toHaveBeenCalled();
     expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
@@ -523,7 +592,7 @@ describe('periodic full rescore for recency decay', () => {
 
     await runScoringPipeline();
 
-    const publication = dbQueryMock.mock.calls.find(
+    const publication = clientQueryMock.mock.calls.find(
       ([sql]) => String(sql).includes('FROM post_scores ps')
     );
     expect(String(publication?.[0])).toContain("ps.component_details->>'run_id' = $5");

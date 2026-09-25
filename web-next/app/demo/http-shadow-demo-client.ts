@@ -58,6 +58,13 @@ type ApiCorpusHealth = ApiSession["corpusHealth"]
 type ApiRankedPost = ApiFeedPayload["posts"][number]
 type ApiWarning = ApiEnvelope<unknown>["warnings"][number]
 
+export class ShadowDemoHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = "ShadowDemoHttpError"
+  }
+}
+
 const SHADOW_DEMO_REQUEST_TIMEOUT_MS = 10_000
 const SHADOW_DEMO_CORPUS_REQUEST_TIMEOUT_MS = 30_000
 
@@ -97,6 +104,9 @@ export function createHttpShadowDemoClient(): ShadowDemoClient {
         SHADOW_DEMO_REQUEST_TIMEOUT_MS,
         apiSessionEnvelopeSchema,
       )
+      if (sessionEnvelope.payload.session.sessionId !== sessionId) {
+        throw new Error("The shadow demo returned a different session during recovery.")
+      }
       return sessionResponseEnvelope(sessionEnvelope, "guided_default", "guided", signal)
     },
 
@@ -256,13 +266,27 @@ async function sessionResponseEnvelope(
   )
   const currentEpochIndex = apiSession.epochs.findIndex((epoch) => epoch.id === apiSession.currentEpochId)
   const previousEpoch = currentEpochIndex > 0 ? apiSession.epochs[currentEpochIndex - 1] : null
+  const currentEpoch = requiredEpoch(apiSession, apiSession.currentEpochId)
+  const reranked = apiSession.phase === "epoch_advanced"
+  const decisionEpochId = reranked ? currentEpoch.decidedByEpochId : currentEpoch.id
+  if (feedEnvelope.payload.epochId !== currentEpoch.id) {
+    throw new Error("The recovered demo feed does not match its authoritative epoch.")
+  }
   return mapEnvelope(envelope, {
     session: mapSession(apiSession, scenarioId, mode),
     community: mapCommunity(apiSession.community, apiSession.corpusHealth),
     currentEpoch: mapCurrentEpoch(apiSession),
     previousEpoch: previousEpoch === null ? null : mapEpoch(previousEpoch),
     feed: mapFeed(feedEnvelope.payload, feedEnvelope.generatedAt),
-    nextRecommendedAction: apiSession.phase === "created" ? "cast_reviewer_vote" : "select_post",
+    agents: apiSession.voterProfiles.map(mapAgent),
+    agentVotes: apiSession.votes
+      .filter((vote) => vote.epochId === decisionEpochId && vote.actorType === "synthetic_voter")
+      .map(mapVote),
+    pendingAggregate: reranked ? mapAggregate(currentEpoch.aggregate)
+      : apiSession.pendingAggregate === null ? null : mapAggregate(apiSession.pendingAggregate),
+    nextRecommendedAction: apiSession.phase === "created" ? "cast_reviewer_vote"
+      : apiSession.phase === "reviewer_voted" ? "run_agent_votes"
+        : apiSession.phase === "synthetic_voters_ran" ? "advance_epoch" : "select_post",
   })
 }
 
@@ -300,7 +324,7 @@ async function requestApi<TPayload>(
       const message = body !== null && typeof body === "object" && "message" in body
         ? String((body as { message: unknown }).message)
         : `Shadow demo request failed with HTTP ${response.status}`
-      throw new Error(message)
+      throw new ShadowDemoHttpError(message, response.status)
     }
     const parsed = schema.safeParse(body)
     if (!parsed.success) {

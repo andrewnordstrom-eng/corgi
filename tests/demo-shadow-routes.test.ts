@@ -29,6 +29,7 @@ describe('shadow demo routes', () => {
     const disabled = buildTestApp();
     const injected = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -64,6 +65,7 @@ describe('shadow demo routes', () => {
       },
     });
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -80,10 +82,11 @@ describe('shadow demo routes', () => {
     await app.close();
   });
 
-  it('replays session creation when a client retries the same nonce', async () => {
+  it('returns a generic conflict without exposing a session on nonce reuse', async () => {
     const app = buildTestApp();
     const loadCorpus = vi.fn(async () => demoCorpus());
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus,
       now: () => NOW,
@@ -96,11 +99,12 @@ describe('shadow demo routes', () => {
     };
 
     const first = await app.inject(request);
-    const replay = await app.inject(request);
+    const duplicate = await app.inject(request);
 
     expect(first.statusCode).toBe(200);
-    expect(replay.statusCode).toBe(200);
-    expect(replay.json().payload.session.sessionId).toBe(first.json().payload.session.sessionId);
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json().message).toBe('Session creation nonce has already been used');
+    expect(duplicate.body).not.toContain(first.json().payload.session.sessionId);
     expect(loadCorpus).toHaveBeenCalledOnce();
     await app.close();
   });
@@ -108,6 +112,7 @@ describe('shadow demo routes', () => {
   it('requires a bounded client nonce for retry-safe session creation', async () => {
     const app = buildTestApp();
     registerShadowDemoRoutes(app, new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -124,10 +129,11 @@ describe('shadow demo routes', () => {
     await app.close();
   });
 
-  it('deduplicates concurrent creation requests carrying the same nonce', async () => {
+  it('allows only one concurrent creation request for a nonce', async () => {
     const app = buildTestApp();
     const loadCorpus = vi.fn(async () => demoCorpus());
     registerShadowDemoRoutes(app, new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus,
       now: () => NOW,
@@ -138,11 +144,14 @@ describe('shadow demo routes', () => {
       payload: { communityId: 'open_science_builders', clientNonce: 'concurrent-retry' },
     };
 
-    const [first, second] = await Promise.all([app.inject(request), app.inject(request)]);
+    const responses = await Promise.all([app.inject(request), app.inject(request)]);
+    const statuses = responses.map((response) => response.statusCode).sort();
 
-    expect(first.statusCode).toBe(200);
-    expect(second.statusCode).toBe(200);
-    expect(second.json().payload.session.sessionId).toBe(first.json().payload.session.sessionId);
+    expect(statuses).toEqual([200, 409]);
+    const created = responses.find((response) => response.statusCode === 200);
+    const conflict = responses.find((response) => response.statusCode === 409);
+    expect(created).toBeDefined();
+    expect(conflict?.body).not.toContain(created?.json().payload.session.sessionId);
     expect(loadCorpus).toHaveBeenCalledOnce();
     await app.close();
   });
@@ -150,6 +159,7 @@ describe('shadow demo routes', () => {
   it('runs the reviewer vote, deterministic synthetic voters, epoch advance, feed, and receipt flow', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -241,7 +251,7 @@ describe('shadow demo routes', () => {
       url: `/api/demo/sessions/${sessionId}/agents/run`,
       payload: {
         baseEpochId: firstEpochId,
-        idempotencyKey: 'synthetic-voters-1',
+        idempotencyKey: 'synthetic-voters-1', // gitleaks:allow -- deterministic test-only idempotency fixture
       },
     });
     expect(syntheticVotersResponse.statusCode).toBe(200);
@@ -330,6 +340,7 @@ describe('shadow demo routes', () => {
   it('does not expose score math for rows hidden by Bluesky public-view policy', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => ({
         ...demoCorpus(),
@@ -394,6 +405,7 @@ describe('shadow demo routes', () => {
   it('caps a session at ten shadow epochs', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -467,6 +479,7 @@ describe('shadow demo routes', () => {
     let loadCount = 0;
     const store = new RecordingSharedCorpusStore();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => {
         loadCount += 1;
@@ -505,9 +518,133 @@ describe('shadow demo routes', () => {
     await app.close();
   });
 
+  it('retries a degraded source on the next session instead of sharing it for an hour', async () => {
+    const store = new MemoryDemoStore();
+    const degraded = demoCorpus();
+    degraded.health = { ...degraded.health, status: 'degraded', source: 'fixture_fallback' };
+    const loadCorpus = vi.fn().mockResolvedValueOnce(degraded).mockResolvedValue(demoCorpus());
+    const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])), store, loadCorpus, now: () => NOW });
+    const first = await service.createSession({ communityId: 'open_science_builders', clientNonce: 'degraded-first' });
+    await expect(store.readSharedCorpus('open_science_builders')).resolves.toBeNull();
+    const second = await service.createSession({ communityId: 'open_science_builders', clientNonce: 'recovered-second' });
+    await service.createSession({ communityId: 'open_science_builders', clientNonce: 'reused-third' });
+    expect(loadCorpus).toHaveBeenCalledTimes(2);
+    expect((await store.readSession(first.payload.session.sessionId))?.corpus.health.source).toBe('fixture_fallback');
+    expect((await store.readSession(second.payload.session.sessionId))?.corpus.health.source).not.toBe('fixture_fallback');
+  });
+
+  for (const source of ['fixture_fallback', 'production_scores_appview'] as const) {
+    it(`reacquires released ownership for concurrent noncacheable ${source} corpora`, async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+      const store = new MemoryDemoStore();
+      const commit = vi.spyOn(store, 'commitSharedCorpus');
+      let activeBuilders = 0;
+      let maximumBuilders = 0;
+      let settled = 0;
+      const loadCorpus = vi.fn(async () => {
+        activeBuilders += 1;
+        maximumBuilders = Math.max(maximumBuilders, activeBuilders);
+        try {
+          await testDelay(20);
+          const corpus = demoCorpus();
+          corpus.health = { ...corpus.health, status: 'degraded', source };
+          return corpus;
+        } finally {
+          activeBuilders -= 1;
+        }
+      });
+      const service = new ShadowDemoService({
+        store, loadCorpus, now: () => NOW,
+        projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
+      });
+      const requests = ['first', 'second'].map((id) => service.createSession({
+        communityId: 'open_science_builders', clientNonce: `noncacheable-${source}-${id}`,
+      }).finally(() => { settled += 1; }));
+      const results = Promise.allSettled(requests);
+      try {
+        await vi.advanceTimersByTimeAsync(500);
+        expect(settled).toBe(2);
+        const completed = await results;
+        expect(completed.every((result) => result.status === 'fulfilled')).toBe(true);
+        const sessions = completed.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+        expect(new Set(sessions.map((session) => session.sessionId)).size).toBe(2);
+        expect(new Set(sessions.map((session) => session.payload.session.corpusProvenance.corpusId)).size).toBe(2);
+        expect(loadCorpus).toHaveBeenCalledTimes(2);
+        expect(maximumBuilders).toBe(1);
+        expect(commit).not.toHaveBeenCalled();
+        await expect(store.readSharedCorpus('open_science_builders')).resolves.toBeNull();
+      } finally {
+        await vi.advanceTimersByTimeAsync(16_000);
+        await results;
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it('rechecks cache after acquiring ownership before starting another builder', async () => {
+    const store = new MemoryDemoStore();
+    const acquire = store.acquireCorpusBuildLock.bind(store);
+    vi.spyOn(store, 'acquireCorpusBuildLock').mockImplementation(async (communityId, token, ttlMs) => {
+      // Publication became visible after the caller's initial cache read.
+      await store.writeSharedCorpus(communityId, demoCorpus(), 3600);
+      return acquire(communityId, token, ttlMs);
+    });
+    const loadCorpus = vi.fn(async () => demoCorpus());
+    const release = vi.spyOn(store, 'releaseCorpusBuildLock');
+    const service = new ShadowDemoService({
+      store, loadCorpus, now: () => NOW,
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
+    });
+    await service.createSession({ communityId: 'open_science_builders', clientNonce: 'published-before-acquire' });
+    expect(loadCorpus).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('reacquires an expired corpus build lease within the original wait budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const store = new ExpiringCorpusLockStore();
+    await store.acquireCorpusBuildLock('open_science_builders', 'expired-builder', 15_000);
+    const loadCorpus = vi.fn(async () => demoCorpus());
+    const service = new ShadowDemoService({
+      store, loadCorpus, now: () => NOW,
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
+    });
+    const pending = service.createSession({ communityId: 'open_science_builders', clientNonce: 'expired-owner-recovery' });
+    const completed = Promise.allSettled([pending]);
+    try {
+      await vi.advanceTimersByTimeAsync(15_600);
+      expect((await completed)[0].status).toBe('fulfilled');
+      expect(loadCorpus).toHaveBeenCalledOnce();
+      expect(store.successfulAcquireCount).toBe(2);
+    } finally {
+      await completed;
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses corpus publication when ownership is lost before commit', async () => {
+    const store = new MemoryDemoStore();
+    vi.spyOn(store, 'renewCorpusBuildLock').mockResolvedValue(false);
+    const commit = vi.spyOn(store, 'commitSharedCorpus');
+    const release = vi.spyOn(store, 'releaseCorpusBuildLock');
+    const service = new ShadowDemoService({
+      store, loadCorpus: async () => demoCorpus(), now: () => NOW,
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
+    });
+    await expect(service.createSession({ communityId: 'open_science_builders', clientNonce: 'lost-corpus-owner' }))
+      .rejects.toThrow('Corpus build lease was lost');
+    expect(commit).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    await expect(store.readSharedCorpus('open_science_builders')).resolves.toBeNull();
+  });
+
   it('rejects public corpus refresh controls', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -529,6 +666,7 @@ describe('shadow demo routes', () => {
     const store = new MemoryDemoStore();
     await store.acquireCorpusBuildLock('open_science_builders', 'slow-builder', 15_000);
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -558,11 +696,12 @@ describe('shadow demo routes', () => {
     }
   });
 
-  it('returns one conflict when the corpus build never publishes before its lease expires', async () => {
+  it('returns one conflict when the corpus build remains owned throughout the wait budget', async () => {
     vi.useFakeTimers();
-    const store = new MemoryDemoStore();
-    await store.acquireCorpusBuildLock('open_science_builders', 'stalled-builder', 15_000);
+    const store = new ExpiringCorpusLockStore();
+    await store.acquireCorpusBuildLock('open_science_builders', 'stalled-builder', 30_000);
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -589,6 +728,7 @@ describe('shadow demo routes', () => {
     vi.setSystemTime(NOW);
     const store = new ExpiringCorpusLockStore();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => {
         for (let batch = 0; batch < 4; batch += 1) {
@@ -625,6 +765,7 @@ describe('shadow demo routes', () => {
   it('rejects malformed header idempotency keys with the same validation as body keys', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -664,6 +805,7 @@ describe('shadow demo routes', () => {
     const app = buildTestApp();
     const store = new MemoryDemoStore();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -702,6 +844,7 @@ describe('shadow demo routes', () => {
   it('rejects non-Open-Science topic keys and oversized mutation bodies', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -744,6 +887,7 @@ describe('shadow demo routes', () => {
   it('caps anonymous active sessions at fifty', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -777,6 +921,7 @@ describe('shadow demo routes', () => {
       new DemoStoreUnavailableError('read shared corpus', 'connection refused')
     );
     registerShadowDemoRoutes(app, new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -795,6 +940,7 @@ describe('shadow demo routes', () => {
   it('enforces the isolated demo limiter and returns Retry-After without invoking the service', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: vi.fn(async () => demoCorpus()),
       now: () => NOW,
@@ -830,6 +976,7 @@ describe('shadow demo routes', () => {
   it('fails closed with 503 when noeviction rejects an isolated rate-limit write', async () => {
     const app = buildTestApp();
     const service = new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store: new MemoryDemoStore(),
       loadCorpus: vi.fn(async () => demoCorpus()),
       now: () => NOW,
@@ -859,6 +1006,7 @@ describe('shadow demo routes', () => {
     const app = buildTestApp();
     const store = new MemoryDemoStore();
     registerShadowDemoRoutes(app, new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
       store,
       loadCorpus: async () => demoCorpus(),
       now: () => NOW,
@@ -968,13 +1116,14 @@ function demoCorpus(): ShadowDemoCorpus {
 class RecordingSharedCorpusStore extends MemoryDemoStore {
   sharedCorpusTtlSeconds: number | null = null;
 
-  override async writeSharedCorpus(
+  override async commitSharedCorpus(
     communityId: ShadowDemoCommunityId,
+    token: string,
     corpus: ShadowDemoCorpus,
     ttlSeconds: number
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.sharedCorpusTtlSeconds = ttlSeconds;
-    await super.writeSharedCorpus(communityId, corpus, ttlSeconds);
+    return super.commitSharedCorpus(communityId, token, corpus, ttlSeconds);
   }
 }
 
@@ -1008,6 +1157,17 @@ class ExpiringCorpusLockStore extends MemoryDemoStore {
     }
     this.corpusLockExpiresAt = Date.now() + ttlMs;
     this.renewalCount += 1;
+    return true;
+  }
+
+  override async commitSharedCorpus(
+    communityId: ShadowDemoCommunityId,
+    token: string,
+    corpus: ShadowDemoCorpus,
+    ttlSeconds: number
+  ): Promise<boolean> {
+    if (this.corpusLockOwner !== token || this.corpusLockExpiresAt <= Date.now()) return false;
+    await super.writeSharedCorpus(communityId, corpus, ttlSeconds);
     return true;
   }
 

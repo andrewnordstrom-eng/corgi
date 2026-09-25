@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
+import { DEMO_RESUME_KEY, readDemoResume, writeDemoResume } from "../demo-session-resume"
+import type { DemoSessionResume } from "../demo-session-resume"
+import { BASELINE_TOPIC_INTENT } from "../shadow-demo-fixtures"
+import { driveFullFlow } from "./_flow"
 import {
   COMMUNITY_GOV_FEED_URL,
   getDegradedCorpusWarning,
@@ -96,6 +100,43 @@ function makeFeed(overrides: Partial<ShadowDemoFeed>): ShadowDemoFeed {
 }
 
 describe("demo v4 frontend release blockers", () => {
+  it("restores the published topic policy in the mock pending aggregate", async () => {
+    const flow = await driveFullFlow("field_notes")
+    expect(flow.agentsRun.payload.pendingAggregate.topicIntent).toEqual(BASELINE_TOPIC_INTENT)
+    expect(Object.keys(flow.advanced.payload.currentEpoch.topicIntent.topicWeights)).toHaveLength(26)
+    expect(flow.advanced.payload.currentEpoch.topicIntent).not.toEqual(BASELINE_TOPIC_INTENT)
+
+    const restored = await flow.client.getSession(flow.sessionId, flow.signal)
+    expect(restored.payload.pendingAggregate?.topicIntent).toEqual(flow.advanced.payload.currentEpoch.topicIntent)
+    expect(restored.payload.pendingAggregate?.topicIntent).toEqual(restored.payload.feed.aggregate.topicIntent)
+  })
+
+  it("retains only a versioned tab continuation hint, not response evidence", () => {
+    const values = new Map<string, string>()
+    const storage: Storage = { get length() { return values.size }, clear: () => values.clear(), key: (index) => [...values.keys()][index] ?? null, getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value) }, removeItem: (key) => { values.delete(key) } }
+    const hint: DemoSessionResume = { version: 1, sessionId: "demo-test", expiresAt: "2026-09-24T00:00:00Z", selection: { epochId: "epoch-2", postUri: "at://did:plc:fixture/app.bsky.feed.post/1" }, nextEpochId: null, mobileView: "receipt" }
+    writeDemoResume(storage, hint)
+    expect(readDemoResume(storage, Date.parse("2026-09-23T00:00:00Z"))).toEqual(hint)
+    expect([...values.keys()]).toEqual([DEMO_RESUME_KEY])
+    expect(Object.keys(JSON.parse(values.get(DEMO_RESUME_KEY) ?? "{}"))).toEqual(["version", "sessionId", "expiresAt", "selection", "nextEpochId", "mobileView"])
+    expect(() => readDemoResume(storage, Date.parse("2026-09-25T00:00:00Z"))).toThrow(/expired/)
+    storage.setItem(DEMO_RESUME_KEY, JSON.stringify({ ...hint, version: 2 }))
+    expect(() => readDemoResume(storage, 0)).toThrow(/incompatible/)
+    storage.setItem(DEMO_RESUME_KEY, JSON.stringify({ ...hint, selection: { epochId: "epoch-2", postUri: "https://private.invalid/secret" } }))
+    expect(() => readDemoResume(storage, 0)).toThrow(/selection is invalid/)
+    storage.setItem(DEMO_RESUME_KEY, "{")
+    expect(() => readDemoResume(storage, 0)).toThrow(/continuation is invalid/)
+    writeDemoResume(storage, null)
+    expect(readDemoResume(storage, 0)).toBeNull()
+  })
+
+  it("does not claim persistence when browser storage refuses access", () => {
+    const denied = (): never => { throw new DOMException("Storage disabled", "SecurityError") }
+    const storage: Storage = { length: 0, clear: denied, key: denied, getItem: denied, setItem: denied, removeItem: denied }
+    expect(() => readDemoResume(storage, 0)).toThrow(/Storage disabled/)
+    expect(() => writeDemoResume(storage, null)).toThrow(/Storage disabled/)
+  })
+
   it("labels fixture corpus counts and provenance without live-snapshot or publication claims", () => {
     const presentation = getDemoCorpusPresentation(makeFeed({
       rankingSource: "fixture_posts_shadow_weights",

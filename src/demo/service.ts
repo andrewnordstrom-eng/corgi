@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { config } from '../config.js';
+import { logger } from '../lib/logger.js';
 import { applyFeedUrlDedup, FEED_URL_DEDUP_DECAY } from '../scoring/feed-publication.js';
-import { DEMO_COMMUNITIES, createDefaultCorpusLoader } from './corpus.js';
+import { DEMO_COMMUNITIES, createDefaultCorpusLoader, createDefaultDisplayProjector } from './corpus.js';
+import { hiddenDisplayPost } from './public-view.js';
 import {
   SHADOW_DEMO_SUGGESTED_KEYWORD_COUNT,
   aggregateShadowContentRules,
@@ -29,6 +31,7 @@ import {
   type ShadowDemoCommunityId,
   type ShadowDemoCorpus,
   type ShadowDemoCorpusItem,
+  type ShadowDemoDisplayPost,
   type ShadowDemoPublicationPolicy,
   type ShadowDemoCounterfactual,
   type ShadowDemoEpoch,
@@ -97,6 +100,7 @@ export interface ShadowDemoServiceDependencies {
     now: Date;
   }) => Promise<ShadowDemoCorpus>;
   now: () => Date;
+  projectDisplay?: (corpus: ShadowDemoCorpus, items: readonly ShadowDemoCorpusItem[]) => Promise<ReadonlyMap<string, ShadowDemoDisplayPost>>;
   /** Defaults to false; the default factory reads DEMO_CONTENT_RULES_ENABLED. */
   contentRulesEnabled?: boolean;
   /** Session seed source; defaults to randomUUID. Injectable for deterministic tests. */
@@ -149,38 +153,30 @@ interface PendingSessionMutation<TPayload> {
 export class ShadowDemoService {
   private readonly store: DemoStore;
   private readonly loadCorpus: ShadowDemoServiceDependencies['loadCorpus'];
+  private readonly projectDisplay: NonNullable<ShadowDemoServiceDependencies['projectDisplay']>;
   private readonly now: () => Date;
   private readonly contentRulesEnabled: boolean;
   private readonly seed: () => string;
 
   constructor(dependencies: ShadowDemoServiceDependencies) {
     this.store = dependencies.store;
+    this.projectDisplay = dependencies.projectDisplay ?? createDefaultDisplayProjector();
     this.loadCorpus = dependencies.loadCorpus;
     this.now = dependencies.now;
     this.contentRulesEnabled = dependencies.contentRulesEnabled ?? false;
     this.seed = dependencies.seed ?? randomUUID;
   }
 
-  private async replayCreatedSession(
-    clientNonce: string,
-    communityId: ShadowDemoCommunityId
-  ): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload> | null> {
+  private async rejectReusedCreationNonce(clientNonce: string): Promise<void> {
     const existingSessionId = await this.store.readSessionIdByClientNonce(clientNonce);
     if (!existingSessionId) {
-      return null;
+      return;
     }
-    const replay = await this.getSession(existingSessionId);
-    if (replay.payload.session.community.id !== communityId) {
-      throw new DemoConflictError('Session creation nonce was already used for a different community');
-    }
-    return replay;
+    throw new DemoConflictError('Session creation nonce has already been used');
   }
 
   async createSession(request: CreateSessionRequest): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload>> {
-    const existing = await this.replayCreatedSession(request.clientNonce, request.communityId);
-    if (existing) {
-      return existing;
-    }
+    await this.rejectReusedCreationNonce(request.clientNonce);
     const now = this.now();
     const corpus = await this.loadCorpusForSession({
       communityId: request.communityId,
@@ -225,28 +221,25 @@ export class ShadowDemoService {
       request.clientNonce
     );
     if (!created) {
-      const replay = await this.replayCreatedSession(request.clientNonce, request.communityId);
-      if (replay) {
-        return replay;
-      }
+      await this.rejectReusedCreationNonce(request.clientNonce);
       throw new DemoStoreCapacityError(
         `Shadow demo is at its ${DEMO_MAX_ACTIVE_SESSIONS}-session capacity; retry after an active session expires`
       );
     }
-    return {
+    return this.projectSessionResult({
       sessionId,
       payload: sessionPayload(state, this.contentRulesEnabled),
       warnings: state.warnings,
-    };
+    });
   }
 
   async getSession(sessionId: string): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload>> {
     const state = await this.readRequiredSession(sessionId);
-    return {
+    return this.projectSessionResult({
       sessionId,
       payload: sessionPayload(state, this.contentRulesEnabled),
       warnings: state.warnings,
-    };
+    });
   }
 
   async castVote(request: CastVoteRequest): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload>> {
@@ -291,13 +284,15 @@ export class ShadowDemoService {
       };
     };
 
-    return this.runIdempotent({
+    const result = await this.runIdempotent({
       sessionId: request.sessionId,
       idempotencyKey: request.idempotencyKey,
       requestPayload: request,
       operation,
       mapReplay: (response) => publicSessionMutationResult(response, this.contentRulesEnabled),
     });
+    // runIdempotent has awaited its finally/release before any remote display checks begin.
+    return this.projectSessionResult(result);
   }
 
   async runSyntheticVoters(
@@ -352,13 +347,15 @@ export class ShadowDemoService {
       };
     };
 
-    return this.runIdempotent({
+    const result = await this.runIdempotent({
       sessionId: request.sessionId,
       idempotencyKey: request.idempotencyKey,
       requestPayload: request,
       operation,
       mapReplay: (response) => publicSessionMutationResult(response, this.contentRulesEnabled),
     });
+    // runIdempotent has awaited its finally/release before any remote display checks begin.
+    return this.projectSessionResult(result);
   }
 
   async advanceEpoch(request: AdvanceEpochRequest): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload>> {
@@ -411,13 +408,15 @@ export class ShadowDemoService {
       };
     };
 
-    return this.runIdempotent({
+    const result = await this.runIdempotent({
       sessionId: request.sessionId,
       idempotencyKey: request.idempotencyKey,
       requestPayload: request,
       operation,
       mapReplay: (response) => publicSessionMutationResult(response, this.contentRulesEnabled),
     });
+    // runIdempotent has awaited its finally/release before any remote display checks begin.
+    return this.projectSessionResult(result);
   }
 
   async getFeed(request: GetFeedRequest): Promise<ShadowDemoServiceResult<ShadowDemoFeedPayload>> {
@@ -431,6 +430,12 @@ export class ShadowDemoService {
       limit: request.limit,
       contentRulesEnabled: this.contentRulesEnabled,
     });
+    const displayRows = [
+      ...ranked.posts,
+      ...(this.contentRulesEnabled && epoch.aggregate.contentRules ? ranked.withheld : []),
+    ];
+    const displayUris = new Set(displayRows.flatMap((row) => row.post.kind === 'public_post' ? [row.post.uri] : []));
+    const display = await this.projectDisplay(state.corpus, state.corpus.items.filter((item) => displayUris.has(item.postUri)));
     return {
       sessionId: state.sessionId,
       payload: {
@@ -440,9 +445,9 @@ export class ShadowDemoService {
         corpusHealth: state.corpus.health,
         corpusProvenance: corpusProvenanceFor(state),
         aggregate: publicAggregate(epoch.aggregate, this.contentRulesEnabled),
-        posts: ranked.posts,
+        posts: ranked.posts.map((post) => projectRankedPost(post, display)),
         ...(this.contentRulesEnabled && epoch.aggregate.contentRules
-          ? { withheldPosts: ranked.withheld }
+          ? { withheldPosts: ranked.withheld.map((post) => ({ ...post, post: projectedPost(post.post, display) })) }
           : {}),
       },
       warnings: state.warnings,
@@ -456,7 +461,8 @@ export class ShadowDemoService {
     if (!item) {
       throw new DemoValidationError(`Post URI is not part of this frozen demo corpus: ${request.postUri}`);
     }
-    if (item.displayPost.kind !== 'public_post') {
+    const display = await this.projectDisplay(state.corpus, [item]);
+    if (item.displayPost.kind !== 'public_post' || display.get(item.postUri)?.kind !== 'public_post') {
       throw new DemoValidationError('Receipt is unavailable for a post hidden by Bluesky public-view policy');
     }
 
@@ -561,6 +567,45 @@ export class ShadowDemoService {
     }
   }
 
+  private async projectSessionResult(
+    result: ShadowDemoServiceResult<ShadowDemoSessionPayload>
+  ): Promise<ShadowDemoServiceResult<ShadowDemoSessionPayload>> {
+    if (!this.contentRulesEnabled || result.sessionId === null) return result;
+    try {
+      const state = await this.readRequiredSession(result.sessionId);
+      const display = await this.projectDisplay(state.corpus, state.corpus.items);
+      const items = state.corpus.items.map((item) => ({
+        ...item,
+        displayPost: display.get(item.postUri) ?? hiddenDisplayPost('Current display eligibility unavailable'),
+      }));
+      return {
+        ...result,
+        payload: { session: {
+          ...result.payload.session,
+          suggestedExcludeKeywords: suggestedExcludeKeywords(items, SHADOW_DEMO_SUGGESTED_KEYWORD_COUNT),
+        } },
+      };
+    } catch (error) {
+      const errorKind = error instanceof Error ? error.name : typeof error;
+      logger.warn(
+        { errorKind, sessionId: result.sessionId },
+        'Shadow demo content-rule suggestions unavailable after committed session result'
+      );
+      return {
+        ...result,
+        warnings: [...result.warnings, {
+          code: 'content_rule_suggestions_unavailable',
+          message: 'Content-rule suggestions are temporarily unavailable; the session change was saved.',
+          severity: 'warning',
+        }],
+        payload: { session: {
+          ...result.payload.session,
+          suggestedExcludeKeywords: [],
+        } },
+      };
+    }
+  }
+
   private async readRequiredSession(sessionId: string): Promise<ShadowDemoSessionState> {
     const state = await this.store.readSession(sessionId);
     if (!state) {
@@ -574,7 +619,7 @@ export class ShadowDemoService {
     now: Date;
   }): Promise<ShadowDemoCorpus> {
     const cached = await this.store.readSharedCorpus(options.communityId);
-    if (cached) {
+    if (cached && cached.health.status === 'live' && cached.health.source !== 'fixture_fallback') {
       return cloneCorpusForSession({
         corpus: cached,
         communityId: options.communityId,
@@ -583,23 +628,26 @@ export class ShadowDemoService {
     }
 
     const token = randomUUID();
-    const acquired = await this.store.acquireCorpusBuildLock(
+    let acquired = await this.store.acquireCorpusBuildLock(
       options.communityId,
       token,
       CORPUS_BUILD_LOCK_TTL_MS
     );
     if (!acquired) {
-      const waited = await this.waitForSharedCorpus(options.communityId);
-      if (waited) {
+      const waited = await this.waitForSharedCorpus(options.communityId, token);
+      if (waited.kind === 'cached') {
         return cloneCorpusForSession({
-          corpus: waited,
+          corpus: waited.corpus,
           communityId: options.communityId,
           now: options.now,
         });
       }
-      throw new DemoConflictError(
-        `Shadow demo corpus is warming for ${options.communityId}; retry session creation shortly`
-      );
+      acquired = waited.kind === 'acquired';
+      if (!acquired) {
+        throw new DemoConflictError(
+          `Shadow demo corpus is warming for ${options.communityId}; retry session creation shortly`
+        );
+      }
     }
 
     const leaseState: { failure: Error | null } = { failure: null };
@@ -625,6 +673,11 @@ export class ShadowDemoService {
     }, CORPUS_BUILD_LOCK_RENEW_INTERVAL_MS);
 
     try {
+      // A previous owner may have published after the waiter's cache read.
+      const published = await this.store.readSharedCorpus(options.communityId);
+      if (published && published.health.status === 'live' && published.health.source !== 'fixture_fallback') {
+        return cloneCorpusForSession({ corpus: published, communityId: options.communityId, now: options.now });
+      }
       const corpus = await this.loadCorpus(options);
       await renewalInFlight;
       if (leaseState.failure !== null) {
@@ -638,11 +691,17 @@ export class ShadowDemoService {
       if (!stillOwned) {
         throw new DemoConflictError(`Corpus build lease was lost for ${options.communityId}`);
       }
-      await this.store.writeSharedCorpus(
-        options.communityId,
-        corpus,
-        SHADOW_DEMO_SHARED_CORPUS_TTL_SECONDS
-      );
+      if (corpus.health.status === 'live' && corpus.health.source !== 'fixture_fallback') {
+        const committed = await this.store.commitSharedCorpus(
+          options.communityId,
+          token,
+          corpus,
+          SHADOW_DEMO_SHARED_CORPUS_TTL_SECONDS
+        );
+        if (!committed) {
+          throw new DemoConflictError(`Corpus build lease was lost for ${options.communityId}`);
+        }
+      }
       return cloneCorpusForSession({
         corpus,
         communityId: options.communityId,
@@ -658,19 +717,23 @@ export class ShadowDemoService {
   }
 
   private async waitForSharedCorpus(
-    communityId: ShadowDemoCommunityId
-  ): Promise<ShadowDemoCorpus | null> {
+    communityId: ShadowDemoCommunityId,
+    token: string
+  ): Promise<{ kind: 'cached'; corpus: ShadowDemoCorpus } | { kind: 'acquired' } | { kind: 'timed-out' }> {
     const maxAttempts = Math.ceil(
       (CORPUS_BUILD_LOCK_TTL_MS + CORPUS_BUILD_WAIT_MARGIN_MS) / CORPUS_BUILD_WAIT_INTERVAL_MS
     );
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await delay(CORPUS_BUILD_WAIT_INTERVAL_MS);
       const cached = await this.store.readSharedCorpus(communityId);
-      if (cached) {
-        return cached;
+      if (cached && cached.health.status === 'live' && cached.health.source !== 'fixture_fallback') {
+        return { kind: 'cached', corpus: cached };
+      }
+      if (await this.store.acquireCorpusBuildLock(communityId, token, CORPUS_BUILD_LOCK_TTL_MS)) {
+        return { kind: 'acquired' };
       }
     }
-    return null;
+    return { kind: 'timed-out' };
   }
 
   private async runIdempotent<TPayload>(options: {
@@ -790,10 +853,7 @@ function sessionPayload(
       ...(contentRulesEnabled
         ? {
             contentRulesEnabled: true,
-            suggestedExcludeKeywords: suggestedExcludeKeywords(
-              state.corpus.items,
-              SHADOW_DEMO_SUGGESTED_KEYWORD_COUNT
-            ),
+            suggestedExcludeKeywords: [],
           }
         : {}),
     },
@@ -1087,6 +1147,13 @@ function publicVote(vote: ShadowDemoVote, contentRulesEnabled: boolean): ShadowD
   return rest;
 }
 
+function hasPublishedBaseline(corpus: ShadowDemoCorpus, epoch: ShadowDemoEpoch): boolean {
+  return corpus.communityId === 'community_gov'
+    && epoch.sequence === 1
+    && corpus.items.length > 0
+    && corpus.items.every((item) => item.publishedRank !== undefined);
+}
+
 function rankedPosts(options: {
   corpus: ShadowDemoCorpus;
   epoch: ShadowDemoEpoch;
@@ -1097,7 +1164,7 @@ function rankedPosts(options: {
   const previousRanks = options.previousEpoch
     ? rankMapForEpoch(options.corpus, options.previousEpoch, options.contentRulesEnabled)
     : new Map<string, number>();
-  const isPublishedBaseline = options.corpus.communityId === 'community_gov' && options.epoch.sequence === 1;
+  const isPublishedBaseline = hasPublishedBaseline(options.corpus, options.epoch);
   const ruleApplication = applyShadowContentRules(
     options.corpus.items,
     adoptedRulesFor(options.epoch, options.contentRulesEnabled)
@@ -1148,7 +1215,7 @@ function rankMapForEpoch(
   contentRulesEnabled: boolean
 ): Map<string, number> {
   const ranks = new Map<string, number>();
-  if (epoch.sequence === 1 && corpus.items.every((item) => item.publishedRank !== undefined)) {
+  if (hasPublishedBaseline(corpus, epoch)) {
     for (const item of corpus.items) ranks.set(item.postUri, item.publishedRank as number);
     return ranks;
   }
@@ -1378,4 +1445,32 @@ function stableStringify(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
     .join(',')}}`;
+}
+
+function projectedPost(
+  post: ShadowDemoDisplayPost,
+  display: ReadonlyMap<string, ShadowDemoDisplayPost>
+): ShadowDemoDisplayPost {
+  if (post.kind === 'hidden_post') return post;
+  return display.get(post.uri) ?? hiddenDisplayPost('Current display eligibility unavailable');
+}
+
+function projectRankedPost(
+  entry: ShadowDemoRankedPost,
+  display: ReadonlyMap<string, ShadowDemoDisplayPost>
+): ShadowDemoRankedPost {
+  const post = projectedPost(entry.post, display);
+  if (post.kind === 'public_post') return { ...entry, post };
+  // Preserve frozen rank slots and movement; withhold all score disclosures and source identity.
+  return {
+    rank: entry.rank,
+    previousRank: entry.previousRank,
+    movement: entry.movement,
+    score: null,
+    weightedComponents: null,
+    rawScores: null,
+    componentScore: null,
+    publicationAdjustment: null,
+    post,
+  };
 }
