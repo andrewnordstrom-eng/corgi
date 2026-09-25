@@ -62,6 +62,7 @@ describe('web-next shadow demo contract', () => {
     });
     expect(SHADOW_DEMO_ISOLATION_CONTRACT.redisPrefixes).toEqual([
       'demo:session:',
+      'demo:session-nonce:',
       'demo:sessions:',
       'demo:corpus:',
       'demo:corpus:current:v4:',

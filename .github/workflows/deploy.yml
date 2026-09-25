@@ -71,7 +71,24 @@ jobs:
             assert.ok(runtime.glibc);
             console.log(JSON.stringify(runtime));
           '
-          npm install --global --ignore-scripts npm@11.19.1
+          # Unpack an integrity-pinned npm distribution without any install scripts.
+          NPM_TOOL_DIR="$(mktemp -d "$RUNNER_TEMP/corgi-npm.XXXXXX")"
+          export NPM_TOOL_DIR
+          curl --fail --silent --show-error --location \
+            https://registry.npmjs.org/npm/-/npm-11.19.1.tgz \
+            --output "$NPM_TOOL_DIR/npm.tgz"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { createHash } from "node:crypto";
+            import assert from "node:assert/strict";
+            const actual = createHash("sha512").update(readFileSync(`${process.env.NPM_TOOL_DIR}/npm.tgz`)).digest("base64");
+            assert.equal(actual, "ztsxKxt/kkIaAs+2i0GU6I+DRmUdrNasxTZKJe9TCdSjKxlhah/4r/hl5ygMD6XAg1qZ9c2TNomR4qgOydp10g==");
+          '
+          tar -xzf "$NPM_TOOL_DIR/npm.tgz" -C "$NPM_TOOL_DIR"
+          mkdir "$NPM_TOOL_DIR/bin"
+          ln -s "$NPM_TOOL_DIR/package/bin/npm-cli.js" "$NPM_TOOL_DIR/bin/npm"
+          export PATH="$NPM_TOOL_DIR/bin:$PATH"
+          printf '%s\n' "$NPM_TOOL_DIR/bin" >> "$GITHUB_PATH"
           test "$(npm --version)" = "11.19.1"
 
       - name: Capture runner Node ABI

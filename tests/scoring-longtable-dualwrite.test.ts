@@ -124,8 +124,14 @@ function setupDefaultMocks() {
 
 /** Find a db.query call by an SQL substring; helper used by the assertions below. */
 function findCall(needle: string): unknown[] | undefined {
-  return dbQueryMock.mock.calls.find((c: unknown[]) =>
-    String(c[0]).includes(needle)
+  return [...dbQueryMock.mock.calls, ...clientQueryMock.mock.calls].find(
+    (c: unknown[]) => String(c[0]).includes(needle)
+  );
+}
+
+function findCalls(needle: string): unknown[][] {
+  return [...dbQueryMock.mock.calls, ...clientQueryMock.mock.calls].filter(
+    (c: unknown[]) => String(c[0]).includes(needle)
   );
 }
 
@@ -133,6 +139,10 @@ describe('scoring pipeline long-table dual-write (PROJ-814)', () => {
   beforeEach(() => {
     __resetPipelineState();
     vi.clearAllMocks();
+    // Clear queued one-shot query results too. Changes in pipeline query
+    // routing can leave an old response queued and shift every later fixture.
+    dbQueryMock.mockReset();
+    clientQueryMock.mockReset();
     configMock.SCORE_LONGTABLE_DUALWRITE_ENABLED = true;
     setupDefaultMocks();
   });
@@ -292,12 +302,8 @@ describe('scoring pipeline long-table dual-write (PROJ-814)', () => {
 
     await runScoringPipeline();
 
-    const wideCount = dbQueryMock.mock.calls.filter((c: unknown[]) =>
-      String(c[0]).includes('INSERT INTO post_scores')
-    ).length;
-    const longCount = dbQueryMock.mock.calls.filter((c: unknown[]) =>
-      String(c[0]).includes('INSERT INTO post_score_components')
-    ).length;
+    const wideCount = findCalls('INSERT INTO post_scores').length;
+    const longCount = findCalls('INSERT INTO post_score_components').length;
 
     expect(wideCount).toBe(3);
     expect(longCount).toBe(3);
@@ -331,19 +337,31 @@ describe('scoring pipeline long-table dual-write (PROJ-814)', () => {
       }
       return { rows: [] };
     });
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes('pending_rescore_generation')) {
+        return { rows: [{ pending_rescore_generation: null }] };
+      }
+      if (text.includes('INSERT INTO post_score_components')) {
+        // Fail only the first long-table write; succeed on the second.
+        const longCount = clientQueryMock.mock.calls.filter((c: unknown[]) =>
+          String(c[0]).includes('INSERT INTO post_score_components')
+        ).length;
+        if (longCount === 1) {
+          throw new Error('simulated long-table INSERT failure');
+        }
+      }
+      return { rows: [] };
+    });
 
     await expect(runScoringPipeline()).resolves.toBeUndefined();
 
     // Both posts should have had a wide-row INSERT attempted.
-    const wideInserts = dbQueryMock.mock.calls.filter((c: unknown[]) =>
-      String(c[0]).includes('INSERT INTO post_scores')
-    );
+    const wideInserts = findCalls('INSERT INTO post_scores');
     expect(wideInserts.length).toBe(2);
 
     // Both long-table INSERT attempts happen; one threw, the loop continued.
-    const longInserts = dbQueryMock.mock.calls.filter((c: unknown[]) =>
-      String(c[0]).includes('INSERT INTO post_score_components')
-    );
+    const longInserts = findCalls('INSERT INTO post_score_components');
     expect(longInserts.length).toBe(2);
 
     // Error-logging contract: scoreAllPosts logs each scoring failure via
