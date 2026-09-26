@@ -1,13 +1,8 @@
 /**
  * Scoring Pipeline — Source-Diversity Determinism Under Concurrency (PROJ-917)
  *
- * The score loop is parallelized (SCORING_CONCURRENCY). source-diversity is the
- * only order-dependent component (1st post from an author -> 1.0, 2nd -> 0.7,
- * 3rd -> 0.5, 4th+ -> 0.3). These tests prove the pre-pass decouples those scores
- * from the concurrent completion order: even when each post's bridging query
- * resolves in a deliberately different order than the input array, every post
- * gets the penalty its INPUT-ARRAY position dictates — identical at any
- * SCORING_CONCURRENCY, and identical to the old sequential loop.
+ * The score loop is parallelized (SCORING_CONCURRENCY). Source diversity is
+ * precomputed in input order so score-write completion timing cannot change it.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -81,6 +76,9 @@ vi.mock('../src/lib/logger.js', () => ({
 }));
 
 import { runScoringPipeline, __resetPipelineState } from '../src/scoring/pipeline.js';
+import { bridgingComponent } from '../src/scoring/components/bridging.js';
+import type { ScoringContext } from '../src/scoring/component.interface.js';
+import type { PostForScoring } from '../src/scoring/score.types.js';
 import { buildEpochRow, buildPostRow } from './helpers/index.js';
 
 const URI_A = 'at://did:plc:testauthor/app.bsky.feed.post/A';
@@ -105,6 +103,8 @@ function sourceDiversityByUri(): Map<string, number> {
  * (A slowest, B fastest) so a naive completion-order implementation would rank
  * B first. Everything else returns empty.
  */
+let scoreWriteOrder: string[] = [];
+
 function installMock() {
   clientQueryMock.mockImplementation((sql: string) => {
     if (sql.includes('pending_rescore_generation')) {
@@ -114,7 +114,8 @@ function installMock() {
   });
   dbConnectMock.mockResolvedValue({ query: clientQueryMock, release: clientReleaseMock });
 
-  const engagerDelayMs: Record<string, number> = { [URI_A]: 60, [URI_B]: 5, [URI_C]: 30 };
+  scoreWriteOrder = [];
+  const scoreWriteDelayMs: Record<string, number> = { [URI_A]: 60, [URI_B]: 5, [URI_C]: 30 };
   dbQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const text = String(sql);
     if (text.includes('FROM governance_epochs') || text.includes('WHERE status')) {
@@ -129,11 +130,11 @@ function installMock() {
         ],
       };
     }
-    // bridging engager query — inject out-of-order latency keyed by subject_uri ($1).
-    if (text.includes('SELECT DISTINCT author_did') && text.includes('subject_uri')) {
-      const subjectUri = String(params?.[0]);
-      await new Promise((r) => setTimeout(r, engagerDelayMs[subjectUri] ?? 0));
-      return { rows: [] }; // < MIN_ENGAGERS -> bridging short-circuits to default
+    if (text.includes('INSERT INTO post_scores')) {
+      const uri = String(params?.[0]);
+      await new Promise((resolve) => setTimeout(resolve, scoreWriteDelayMs[uri] ?? 0));
+      scoreWriteOrder.push(uri);
+      return { rows: [] };
     }
     return { rows: [] }; // wide INSERT, writeToRedisFromDb, updateCurrentRunScope, etc.
   });
@@ -161,14 +162,16 @@ describe('source-diversity determinism under concurrency (PROJ-917)', () => {
     await runScoringPipeline();
 
     const byUri = sourceDiversityByUri();
-    // A (input-first, but bridging slowest) still gets the 1st-post penalty.
+    // Writes complete in a different order than candidates, while penalties
+    // remain tied to the original candidate sequence.
+    expect(scoreWriteOrder).toEqual([URI_B, URI_C, URI_A]);
     expect(byUri.get(URI_A)).toBe(1.0);
     expect(byUri.get(URI_B)).toBe(0.7);
     expect(byUri.get(URI_C)).toBe(0.5);
   });
 
   it('handles an empty candidate set without error (worker pool degenerates to a no-op)', async () => {
-    dbQueryMock.mockImplementation(async (sql: unknown) => {
+    dbQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const text = String(sql);
       if (text.includes('FROM governance_epochs') || text.includes('WHERE status')) {
         return { rows: [buildEpochRow({ id: 1 })] };
@@ -197,9 +200,63 @@ describe('source-diversity determinism under concurrency (PROJ-917)', () => {
     expect(byUri.get(URI_C)).toBe(0.5);
   });
 
-  it('isolates a per-post scoring failure without failing the run (concurrency=8)', async () => {
-    // Make B's bridging query throw. B should be dropped (one error log), while
-    // A and C still score with their correct input-order diversity penalties.
+  it('scores every candidate through sequential batches capped at 16', async () => {
+    const posts = Array.from({ length: 33 }, (_, index) =>
+      buildPostRow({ uri: `at://did:plc:batch/app.bsky.feed.post/${index}` })
+    );
+    scoreWriteOrder = [];
+    const scoreWriteDelayMs: Record<string, number> = {
+      [posts[0].uri]: 60,
+      [posts[1].uri]: 5,
+      [posts[2].uri]: 30,
+      [posts[16].uri]: 60,
+      [posts[17].uri]: 5,
+      [posts[18].uri]: 30,
+    };
+    dbQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const text = String(sql);
+      if (text.includes('FROM governance_epochs') || text.includes('WHERE status')) {
+        return { rows: [buildEpochRow({ id: 1 })] };
+      }
+      if (text.includes('FROM posts p') && text.includes('LEFT JOIN post_engagement')) {
+        return { rows: posts };
+      }
+      if (text.includes('INSERT INTO post_scores')) {
+        const uri = String(params?.[0]);
+        await new Promise((resolve) => setTimeout(resolve, scoreWriteDelayMs[uri] ?? 0));
+        scoreWriteOrder.push(uri);
+      }
+      return { rows: [] };
+    });
+
+    await runScoringPipeline();
+
+    const batchCalls = (clientQueryMock.mock.calls as unknown[][]).filter((call) =>
+      String(call[0]).includes('WITH combined AS')
+    );
+    expect(batchCalls.map((call) => (call[1] as unknown[][])[0].length)).toEqual([16, 16, 1]);
+    expect(batchCalls.flatMap((call) => (call[1] as unknown[][])[0])).toEqual(posts.map((post) => post.uri));
+    const scored = sourceDiversityByUri();
+    expect(scored.size).toBe(33);
+    expect([...scored.keys()].sort()).toEqual(posts.map((post) => post.uri).sort());
+    expect(scoreWriteOrder).toHaveLength(posts.length);
+    expect([...scoreWriteOrder].sort()).toEqual(posts.map((post) => post.uri).sort());
+    expect(scoreWriteOrder).not.toEqual(posts.map((post) => post.uri));
+    expect(loggerErrorMock).not.toHaveBeenCalled();
+    expect(posts.map((post) => scored.get(post.uri))).toEqual([
+      1.0, 0.7, 0.5, ...Array.from({ length: 30 }, () => 0.3),
+    ]);
+  });
+
+  it('aborts before score writes and publication when a bridging batch read fails', async () => {
+    // Batch reads are a required precondition for scoring; a failure must not
+    // silently publish a feed with default bridging scores.
+    clientQueryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('WITH combined AS')) {
+        throw new Error('simulated bridging batch failure');
+      }
+      return { rows: [] };
+    });
     dbQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const text = String(sql);
       if (text.includes('FROM governance_epochs') || text.includes('WHERE status')) {
@@ -210,26 +267,20 @@ describe('source-diversity determinism under concurrency (PROJ-917)', () => {
           rows: [buildPostRow({ uri: URI_A }), buildPostRow({ uri: URI_B }), buildPostRow({ uri: URI_C })],
         };
       }
-      if (text.includes('SELECT DISTINCT author_did') && text.includes('subject_uri')) {
-        if (String(params?.[0]) === URI_B) {
-          throw new Error('simulated bridging failure for B');
-        }
-        return { rows: [] };
-      }
       return { rows: [] };
     });
 
-    await expect(runScoringPipeline()).resolves.toBeUndefined();
+    await expect(runScoringPipeline()).rejects.toThrow('simulated bridging batch failure');
+    expect(sourceDiversityByUri().size).toBe(0);
+    expect(redisPipelineFactoryMock).not.toHaveBeenCalled();
+  });
 
-    const byUri = sourceDiversityByUri();
-    // B dropped (no wide INSERT); A and C keep their input-order penalties.
-    expect(byUri.has(URI_B)).toBe(false);
-    expect(byUri.get(URI_A)).toBe(1.0);
-    expect(byUri.get(URI_C)).toBe(0.5);
-
-    const failureLogs = (loggerErrorMock.mock.calls as unknown[][]).filter(
-      (call) => String(call[1]).includes('Failed to score post')
+  it('does not fall back to per-post reads when batch evidence is missing', async () => {
+    const post = buildPostRow({ uri: URI_A }) as PostForScoring;
+    const context = { bridgingEvidenceByPost: new Map() } as ScoringContext;
+    await expect(bridgingComponent.score(post, context)).rejects.toThrow(
+      `Bridging batch omitted candidate evidence for ${URI_A}`
     );
-    expect(failureLogs.length).toBe(1);
+    expect(dbQueryMock).not.toHaveBeenCalled();
   });
 });

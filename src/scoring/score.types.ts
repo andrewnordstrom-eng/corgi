@@ -21,6 +21,14 @@ export type ClassificationMethod = typeof CLASSIFICATION_METHODS[number];
  */
 export type ScoreComponents = GovernanceWeights;
 
+/** Bridging calculation retained for one candidate after each bounded DB batch. */
+export interface BridgingScoreEvidence {
+  raw: number;
+  evidenceState: 'observed' | 'insufficient';
+  engagerCount: number;
+  pairCount: number;
+}
+
 /**
  * Complete score decomposition for a post.
  * This is what gets stored in the database - all the data needed for transparency.
