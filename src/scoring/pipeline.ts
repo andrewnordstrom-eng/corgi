@@ -24,8 +24,10 @@ import { logger } from '../lib/logger.js';
 import { getActiveEpoch } from '../db/queries/epochs.js';
 import { randomUUID } from 'crypto';
 import { createAuthorCountMap, scoreSourceDiversity } from './components/source-diversity.js';
+import { scoreBridgingBatch } from './components/bridging.js';
 import {
   GovernanceEpoch,
+  BridgingScoreEvidence,
   PostForScoring,
   ScoredPost,
   ScoreComponents,
@@ -1210,47 +1212,62 @@ async function scoreAllPosts(
     sourceDiversityByPost.set(post, scoreSourceDiversity(post.authorDid, authorCounts));
   }
 
-  const context: ScoringContext = {
-    epoch,
-    scoringWindowHours: config.SCORING_WINDOW_HOURS,
-    authorCounts,
-    sourceDiversityByPost,
-  };
-
-  // Score posts through a bounded rolling worker-pool. Each in-flight post holds
-  // at most ONE DB connection at a time (sequential components + sequential
-  // bridging queries + sequential writes), so peak scoring connections ≈
-  // SCORING_CONCURRENCY. A rolling pool (shared cursor) keeps exactly N posts in
-  // flight — unlike chunked Promise.all it never stalls on a chunk's slowest post
-  // (per-post bridging cost varies from 1 to 21 DB reads).
+  // Keep score evidence and writes bounded to one chunk. The global diversity
+  // prepass above preserves the original candidate order across chunk edges.
   const results: (ScoredPost | undefined)[] = new Array(posts.length);
-  let next = 0;
-
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      // Read-then-increment is atomic in single-threaded JS (no await between).
-      const i = next++;
-      if (i >= posts.length) return;
-      const post = posts[i];
-      try {
-        // Classification method is determined at ingestion time and stored on
-        // the posts row. The pipeline reads it as-is — no runtime override.
-        const classificationMethod = post.classificationMethod === 'embedding' ? 'embedding' : 'keyword';
-
-        const scoredPost = await scorePost(post, epoch, context);
-        results[i] = scoredPost;
-
-        // Store to database (GOLDEN RULE: all components, weights, and weighted values)
-        await storeScore(scoredPost, epoch, runId, classificationMethod);
-      } catch (err) {
-        // Log and continue - one bad post never fails the whole run.
-        logger.error({ err, uri: post.uri }, 'Failed to score post');
-      }
+  const workerCount = Math.max(1, Math.min(resolveScoringConcurrency(), 16));
+  for (let offset = 0; offset < posts.length; offset += 16) {
+    const chunk = posts.slice(offset, offset + 16);
+    const batchClient = await db.connect();
+    let evidence: ReadonlyMap<string, BridgingScoreEvidence>;
+    try {
+      evidence = await scoreBridgingBatch(batchClient, chunk);
+    } finally {
+      batchClient.release();
     }
-  };
+    const bridgingEvidenceByPost = new Map<PostForScoring, BridgingScoreEvidence>();
+    for (const post of chunk) {
+      const key = `${post.uri}\u0000${post.createdAt.toISOString()}`;
+      const item = evidence.get(key);
+      if (item === undefined) {
+        throw new Error(`Bridging batch omitted candidate evidence for ${post.uri}`);
+      }
+      bridgingEvidenceByPost.set(post, item);
+    }
+    const context: ScoringContext = {
+      epoch,
+      scoringWindowHours: config.SCORING_WINDOW_HOURS,
+      authorCounts,
+      sourceDiversityByPost,
+      bridgingEvidenceByPost,
+    };
+    let next = offset;
+    const chunkEnd = offset + chunk.length;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        // Read-then-increment is atomic in single-threaded JS (no await between).
+        const i = next++;
+        if (i >= chunkEnd) return;
+        const post = posts[i];
+        try {
+          // Classification method is determined at ingestion time and stored on
+          // the posts row. The pipeline reads it as-is — no runtime override.
+          const classificationMethod = post.classificationMethod === 'embedding' ? 'embedding' : 'keyword';
 
-  const workerCount = Math.max(1, Math.min(resolveScoringConcurrency(), posts.length));
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+          const scoredPost = await scorePost(post, epoch, context);
+          results[i] = scoredPost;
+
+          // Store to database (GOLDEN RULE: all components, weights, and weighted values)
+          await storeScore(scoredPost, epoch, runId, classificationMethod);
+        } catch (err) {
+          // Log and continue - one bad post never fails the whole run.
+          logger.error({ err, uri: post.uri }, 'Failed to score post');
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(workerCount, chunk.length) }, () => worker()));
+    bridgingEvidenceByPost.clear();
+  }
 
   // results[] is index-keyed above, so the returned array stays in input order
   // (posts that threw leave an undefined slot, filtered out here).

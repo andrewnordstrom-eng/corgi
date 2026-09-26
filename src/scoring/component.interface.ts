@@ -12,7 +12,7 @@
  * 5. Update the frontend — sliders are auto-generated from votable-params
  */
 
-import type { PostForScoring, GovernanceEpoch } from './score.types.js';
+import type { PostForScoring, GovernanceEpoch, BridgingScoreEvidence } from './score.types.js';
 import type { GovernanceWeightKey } from '../config/votable-params.js';
 
 /**
@@ -33,6 +33,8 @@ export interface ScoringContext {
    * Absent for non-pipeline callers, which fall back to `authorCounts`.
    */
   readonly sourceDiversityByPost?: ReadonlyMap<PostForScoring, number>;
+  /** Run-scoped bounded batch evidence keyed by post identity; absent for legacy callers. */
+  readonly bridgingEvidenceByPost?: ReadonlyMap<PostForScoring, BridgingScoreEvidence>;
 }
 
 /**

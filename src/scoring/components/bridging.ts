@@ -20,7 +20,7 @@
 import type { PoolClient } from 'pg';
 import { db } from '../../db/client.js';
 import type { ScoringComponent } from '../component.interface.js';
-import type { PostForScoring } from '../score.types.js';
+import type { BridgingScoreEvidence, PostForScoring } from '../score.types.js';
 
 /** Maximum engagers to consider (performance limit) */
 const MAX_ENGAGERS = 50;
@@ -36,13 +36,6 @@ const DEFAULT_BRIDGING_SCORE = 0.3;
 
 /** Minimum engagers needed for meaningful bridging calculation */
 const MIN_ENGAGERS = 2;
-
-export interface BridgingScoreEvidence {
-  raw: number;
-  evidenceState: 'observed' | 'insufficient';
-  engagerCount: number;
-  pairCount: number;
-}
 
 interface EngagerRow {
   post_uri: string;
@@ -279,7 +272,14 @@ function jaccardDistance(setA: ReadonlySet<string>, setB: ReadonlySet<string>): 
 export const bridgingComponent: ScoringComponent = {
   key: 'bridging',
   name: 'Bridging',
-  async score(post) {
+  async score(post, context) {
+    if (context.bridgingEvidenceByPost !== undefined) {
+      const evidence = context.bridgingEvidenceByPost.get(post);
+      if (evidence === undefined) {
+        throw new Error(`Bridging batch omitted candidate evidence for ${post.uri}`);
+      }
+      return evidence.raw;
+    }
     return scoreBridging(post.uri, post.authorDid);
   },
 };

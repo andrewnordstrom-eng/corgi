@@ -179,6 +179,8 @@ describe('scoring pipeline classification method tracking', () => {
   beforeEach(() => {
     __resetPipelineState();
     vi.clearAllMocks();
+    dbQueryMock.mockReset();
+    clientQueryMock.mockReset();
     setupDefaultMocks();
   });
 
