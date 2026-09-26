@@ -203,6 +203,16 @@ export function createMockShadowDemoClient(options: MockShadowDemoClientOptions 
       previousEpoch: state.publishedEpoch ? state.openEpoch : null,
       feed: currentFeed(state),
       nextRecommendedAction: nextRecommendedActionFor(state.session.phase),
+      agents: DEMO_AGENTS.map((entry) => entry.agent),
+      agentVotes: state.agentVotes,
+      pendingAggregate: state.agentVotes.length === 0 ? null : {
+        weights: state.publishedEpoch?.weights ?? trimmedVoterAverage([
+          state.reviewerVote?.weights ?? state.openEpoch.weights,
+          ...state.agentVotes.map((vote) => vote.weights),
+        ]),
+        topicIntent: state.publishedEpoch?.topicIntent ?? BASELINE_TOPIC_INTENT,
+        voteSummary: (state.publishedEpoch ?? state.openEpoch).voteSummary,
+      },
     }
   }
 

@@ -14,6 +14,7 @@ const linkGroups = [
     heading: "Product",
     links: [
       { label: "How it works", href: "/how-it-works" },
+      { label: "Live feed", href: "/feed" },
       { label: "Live demo", href: "/demo" },
       { label: "Add the feed", href: "/start" },
       { label: "History", href: "/history" },

@@ -128,6 +128,9 @@ function registerShadowDemoRouteFamily(
     return;
   }
   const service = serviceOverride ?? createDefaultShadowDemoService();
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.url.split('?')[0].startsWith(`${options.prefix}/`)) reply.header('cache-control', 'no-store');
+  });
 
   if (rateLimitGuard && options.installCloseHook) {
     app.addHook('onClose', async () => {
@@ -312,6 +315,7 @@ async function handleShadowDemoRequest<TPayload>(
   }>,
   contractVersion: typeof SHADOW_DEMO_CONTRACT_VERSION | typeof SHADOW_DEMO_V4_CONTRACT_VERSION = SHADOW_DEMO_CONTRACT_VERSION
 ): Promise<FastifyReply> {
+  reply.header('cache-control', 'no-store');
   try {
     const result = await operation();
     return sendEnvelope(request, reply, result, contractVersion);

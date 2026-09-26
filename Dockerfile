@@ -4,9 +4,13 @@
 # =============================================================================
 # Stage 1: Build
 # =============================================================================
-FROM node:20.19.0-alpine AS builder
+FROM node:22.23.2-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS builder
 
 WORKDIR /app
+
+RUN test "$(node --version)" = "v22.23.2" \
+  && npm install --global --ignore-scripts npm@11.19.1 \
+  && test "$(npm --version)" = "11.19.1"
 
 # Install build dependencies
 RUN apk add --no-cache python3 make g++
@@ -27,9 +31,13 @@ RUN npm run build
 # =============================================================================
 # Stage 2: Production
 # =============================================================================
-FROM node:20.19.0-alpine AS production
+FROM node:22.23.2-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS production
 
 WORKDIR /app
+
+RUN test "$(node --version)" = "v22.23.2" \
+  && npm install --global --ignore-scripts npm@11.19.1 \
+  && test "$(npm --version)" = "11.19.1"
 
 # Set production environment
 ENV NODE_ENV=production

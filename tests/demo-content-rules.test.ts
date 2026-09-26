@@ -528,6 +528,7 @@ function buildService(
   store: MemoryDemoStore = new MemoryDemoStore()
 ): ShadowDemoService {
   return new ShadowDemoService({
+      projectDisplay: async (_corpus, items) => new Map(items.map((item) => [item.postUri, item.displayPost])),
     store,
     loadCorpus: async () => corpus(),
     now: () => NOW,

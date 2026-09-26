@@ -8,6 +8,7 @@
     "dev": "next dev",
     "lint": "next lint",
     "smoke:production": "playwright test --config playwright.config.ts",
+    "test:feed": "npm run build && playwright test --config playwright.feed.config.ts",
     "start": "next start"
   },
   "dependencies": {
@@ -80,5 +81,9 @@
     "js-yaml": "4.3.2",
     "postcss": "8.5.26",
     "sharp": "0.35.4"
+  },
+  "engines": {
+    "node": "^22.19.0",
+    "npm": "11.19.1"
   }
 }

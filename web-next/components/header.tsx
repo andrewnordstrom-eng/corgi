@@ -76,6 +76,7 @@ export function Header() {
 
   const navItems = [
     { name: "How it works", href: "/how-it-works" },
+    { name: "Live feed", href: "/feed" },
     { name: "Demo", href: "/demo" },
     { name: "Get started", href: "/start" },
     { name: "FAQ", href: "/#faq-section" },

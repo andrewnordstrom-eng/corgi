@@ -44,7 +44,11 @@ export interface FeedCommunityTerms {
 
 export interface FeedCommunityRedisKeys {
   current: string;
+  order: string | null;
+  count: string | null;
   lastKnownGood: string | null;
+  lastKnownGoodOrder: string | null;
+  lastKnownGoodCount: string | null;
   lastKnownGoodFallbackTotal: string | null;
   epoch: string;
   health: string;
@@ -66,29 +70,37 @@ export interface FeedCommunity {
   includePinnedAnnouncements: boolean;
 }
 
-export const COMMUNITY_GOV_REDIS_KEYS: FeedCommunityRedisKeys = {
+export const COMMUNITY_GOV_REDIS_KEYS = {
   current: 'feed:current',
+  order: 'feed:order',
+  count: 'feed:count',
   lastKnownGood: 'feed:last_known_good',
+  lastKnownGoodOrder: 'feed:last_known_good_order',
+  lastKnownGoodCount: 'feed:last_known_good_count',
   lastKnownGoodFallbackTotal: 'feed:last_known_good_fallback_total',
   epoch: 'feed:epoch',
   health: 'feed:health',
   currentSnapshot: 'feed:current_snapshot_id',
   snapshotGeneration: 'feed:current_snapshot_generation',
   snapshotPrefix: 'snapshot:',
-};
+} as const satisfies FeedCommunityRedisKeys;
 
 export const BIRDERS_REDIS_PREFIX = 'feed:community:birders_who_code';
 
-export const BIRDERS_REDIS_KEYS: FeedCommunityRedisKeys = {
+export const BIRDERS_REDIS_KEYS = {
   current: `${BIRDERS_REDIS_PREFIX}:current`,
+  order: null,
+  count: null,
   lastKnownGood: null,
+  lastKnownGoodOrder: null,
+  lastKnownGoodCount: null,
   lastKnownGoodFallbackTotal: null,
   epoch: `${BIRDERS_REDIS_PREFIX}:epoch`,
   health: `${BIRDERS_REDIS_PREFIX}:health`,
   currentSnapshot: `${BIRDERS_REDIS_PREFIX}:current_snapshot_id`,
   snapshotGeneration: `${BIRDERS_REDIS_PREFIX}:snapshot_generation`,
   snapshotPrefix: 'snapshot:community:birders_who_code:',
-};
+} as const satisfies FeedCommunityRedisKeys;
 
 export const FEED_COMMUNITIES = [
   {

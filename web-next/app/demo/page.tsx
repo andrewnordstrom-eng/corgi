@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { AlertCircle, FileSearch, ListOrdered, RotateCcw } from "lucide-react"
 import { Header } from "@/components/header"
@@ -21,6 +21,9 @@ import {
   getReceiptSelectionAnnouncement,
 } from "@/components/demo/live-proof-panel"
 import { getDemoClient } from "./demo-client"
+import { ShadowDemoHttpError } from "./http-shadow-demo-client"
+import { DemoResumeHintError, readDemoResume, writeDemoResume } from "./demo-session-resume"
+import type { DemoSessionResume } from "./demo-session-resume"
 import { DemoRequestCoordinator } from "./demo-request-coordinator"
 import type { DemoRequestContext } from "./demo-request-coordinator"
 import { HERO, LABELS, STEP_PANELS } from "./shadow-demo-copy"
@@ -94,6 +97,9 @@ export default function DemoPage() {
   const [error, setError] = useState<string | null>(null)
   const requestCoordinator = useRef(new DemoRequestCoordinator())
   const panelRef = useRef<HTMLDivElement>(null)
+  const resumeHint = useRef<DemoSessionResume | null>(null)
+  const [resumeSessionId, setResumeSessionId] = useState<string | null>(null)
+  const [storageWarning, setStorageWarning] = useState<string | null>(null)
 
   const client = getDemoClient()
   const reduceMotion = useReducedMotion() ?? false
@@ -103,7 +109,155 @@ export default function DemoPage() {
   const corpusPresentation = feed === null ? null : getDemoCorpusPresentation(feed)
   const usesMechanicsFixture = corpusPresentation?.usesMechanicsFixture ?? false
 
-  useEffect(() => () => requestCoordinator.current.cancel(), [])
+  const persistResume = useCallback((hint: DemoSessionResume | null): void => {
+    resumeHint.current = hint
+    try {
+      writeDemoResume(window.sessionStorage, hint)
+      setStorageWarning(null)
+    } catch {
+      setStorageWarning("This browser could not save demo continuation. Keep this tab open; reload may require a new session.")
+    }
+  }, [])
+
+  const resetSessionState = useCallback((): void => {
+    setSession(null)
+    setCommunity(null)
+    setOpenEpochId(null)
+    setPublishedEpoch(null)
+    setBaselineFeed(null)
+    setFeedAfter(null)
+    setAgents([])
+    setAgentVotes([])
+    setPendingAggregate(null)
+    setSelectedUri(null)
+    setReceipt(null)
+    setMobileView("feed")
+    setStartingNextEpoch(false)
+    setFreePlayEnabled(false)
+    setSessionWarnings([])
+    setReceiptAnnouncement("")
+  }, [])
+
+  const recoverSession = useCallback(async (sessionId: string, request: DemoRequestContext): Promise<void> => {
+    let response
+    try {
+      response = await client.getSession(sessionId, request.signal)
+    } catch (cause) {
+      if (request.isCurrent() && cause instanceof ShadowDemoHttpError && (cause.status === 404 || cause.status === 410)) {
+        if (resumeHint.current?.sessionId === sessionId) persistResume(null)
+        resetSessionState()
+        setResumeSessionId(null)
+        throw new DemoResumeHintError("Your demo session has expired or is no longer available. Start a new session.")
+      }
+      throw cause
+    }
+    if (!request.isCurrent()) return
+    const { payload } = response
+    if (Date.parse(payload.session.expiresAt) <= Date.now()) {
+      if (resumeHint.current?.sessionId === sessionId) persistResume(null)
+      resetSessionState()
+      setResumeSessionId(null)
+      throw new DemoResumeHintError("Your demo session has expired. Start a new session.")
+    }
+    const saved = resumeHint.current?.sessionId === sessionId ? resumeHint.current : null
+    const published = payload.session.phase === "reranked" || payload.session.phase === "epoch_transitioned"
+    const nextRound = published && saved?.nextEpochId === payload.currentEpoch.id
+    resetSessionState()
+    setSessionWarnings(response.warnings)
+    setSession(payload.session)
+    setCommunity(payload.community)
+    setOpenEpochId(payload.currentEpoch.id)
+    setStartingNextEpoch(nextRound)
+    setFreePlayEnabled(payload.currentEpoch.sequence > payload.session.guidedEpochs || (nextRound && payload.currentEpoch.sequence >= payload.session.guidedEpochs))
+    if (published && !nextRound) {
+      setFeedAfter(payload.feed)
+      setPublishedEpoch(payload.currentEpoch)
+    } else {
+      setBaselineFeed(payload.feed)
+    }
+    if (!nextRound) {
+      setAgents(payload.agents)
+      setAgentVotes(payload.agentVotes)
+      setPendingAggregate(payload.pendingAggregate)
+    }
+    const selected = published && !nextRound && saved?.selection?.epochId === payload.currentEpoch.id
+      ? payload.feed.items.find((item): item is ShadowDemoPublicFeedItem => item.visibility === "public" && item.post.uri === saved.selection?.postUri)
+      : undefined
+    const hint: DemoSessionResume = {
+      version: 1, sessionId, expiresAt: payload.session.expiresAt,
+      selection: selected ? { postUri: selected.post.uri, epochId: payload.currentEpoch.id } : null,
+      nextEpochId: nextRound ? payload.currentEpoch.id : null,
+      mobileView: saved?.mobileView ?? "feed",
+    }
+    persistResume(hint)
+    setMobileView(hint.mobileView)
+    setResumeSessionId(null)
+    if (saved?.selection !== null && saved?.selection !== undefined && selected === undefined && !nextRound) {
+      setError("The saved receipt selection is no longer in this epoch. Select a visible post to inspect its receipt.")
+    }
+    if (selected) {
+      setSelectedUri(selected.post.uri)
+      setReceiptAnnouncement(getReceiptSelectionAnnouncement(selected.rank, false))
+      setReceiptFocusRequest((current) => current + 1)
+      try {
+        const result = await client.getReceipt(sessionId, { epochId: payload.currentEpoch.id, postUri: selected.post.uri }, request.signal)
+        if (!request.isCurrent()) return
+        const restored = result.payload.receipt
+        if (restored.postUri !== selected.post.uri || restored.epochId !== payload.currentEpoch.id
+          || restored.visibleRank !== selected.rank || Math.abs(restored.totalScore - selected.score.total) > 1e-9) {
+          throw new Error("Corgi refused a receipt that did not match the restored post, epoch, rank and score.")
+        }
+        setReceipt(restored)
+        setReceiptAnnouncement(getReceiptSelectionAnnouncement(selected.rank, true))
+      } catch (cause) {
+        if (request.isCurrent()) {
+          setSelectedUri(null)
+          setReceipt(null)
+          setReceiptAnnouncement("")
+          setMobileView("feed")
+          persistResume({ ...hint, selection: null, mobileView: "feed" })
+        }
+        throw cause
+      }
+    }
+  }, [client, persistResume, resetSessionState])
+
+  const retryResume = useCallback(async (sessionId: string): Promise<void> => {
+    const request = requestCoordinator.current.start()
+    setBusy(true)
+    setError(null)
+    setResumeSessionId(sessionId)
+    try {
+      await recoverSession(sessionId, request)
+    } catch (cause) {
+      if (request.isCurrent()) setError(cause instanceof Error ? cause.message : "Demo recovery failed. Retry or start a new session.")
+    } finally {
+      if (request.isCurrent()) setBusy(false)
+    }
+  }, [recoverSession])
+
+  useEffect(() => {
+    const coordinator = requestCoordinator.current
+    try {
+      const hint = readDemoResume(window.sessionStorage, Date.now())
+      resumeHint.current = hint
+      if (hint !== null) {
+        setResumeSessionId(hint.sessionId)
+        const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined
+        if (navigation?.type === "reload" || navigation?.type === "back_forward") {
+          void retryResume(hint.sessionId)
+        }
+      }
+    } catch (cause) {
+      if (cause instanceof DemoResumeHintError) {
+        persistResume(null)
+        setError(cause.message)
+      } else {
+        setStorageWarning("This browser could not read saved demo continuation. You can start a new session, but reload recovery may be unavailable.")
+      }
+    }
+    return () => coordinator.cancel()
+  }, [persistResume, retryResume])
 
   useEffect(() => {
     const panel = panelRef.current
@@ -144,13 +298,14 @@ export default function DemoPage() {
         const failureMessage = cause instanceof Error ? cause.message : "Something went wrong in the demo."
         if (recoverSessionId !== null) {
           try {
+            setResumeSessionId(recoverSessionId)
             await recoverSession(recoverSessionId, request)
             if (request.isCurrent()) {
               setError(`${failureMessage} Corgi refreshed the authoritative session state before you continue.`)
             }
-          } catch {
+          } catch (recoveryFailure) {
             if (request.isCurrent()) {
-              setError(failureMessage)
+              setError(recoveryFailure instanceof Error ? recoveryFailure.message : failureMessage)
             }
           }
         } else {
@@ -164,22 +319,6 @@ export default function DemoPage() {
     }
   }
 
-  async function recoverSession(sessionId: string, request: DemoRequestContext): Promise<void> {
-    const response = await client.getSession(sessionId, request.signal)
-    if (!request.isCurrent()) return
-    const { payload } = response
-    setSessionWarnings(response.warnings)
-    setStartingNextEpoch(false)
-    setSession(payload.session)
-    setCommunity(payload.community)
-    setOpenEpochId(payload.currentEpoch.id)
-    if (payload.session.phase === "reranked" || payload.session.phase === "epoch_transitioned") {
-      setFeedAfter(payload.feed)
-      setPublishedEpoch(payload.currentEpoch)
-    } else {
-      setBaselineFeed(payload.feed)
-    }
-  }
 
   function clearRoundState(): void {
     setFeedAfter(null)
@@ -192,6 +331,8 @@ export default function DemoPage() {
   }
 
   function handleStart(communityId: ShadowDemoCommunityId): void {
+    persistResume(null)
+    setResumeSessionId(null)
     void run(async (request) => {
       const response = await client.createSession(
         { communityId, scenarioId: "guided_default", clientNonce: uid(), mode: "guided" },
@@ -210,6 +351,7 @@ export default function DemoPage() {
       clearRoundState()
       setPublishedEpoch(null)
       setFreePlayEnabled(false)
+      persistResume({ version: 1, sessionId: payload.session.id, expiresAt: payload.session.expiresAt, selection: null, nextEpochId: null, mobileView: "feed" })
     }, null)
   }
 
@@ -237,6 +379,7 @@ export default function DemoPage() {
       setSessionWarnings(response.warnings)
       setSession(payload.session)
       setStartingNextEpoch(false)
+      if (resumeHint.current?.sessionId === session.id) persistResume({ ...resumeHint.current, nextEpochId: null, selection: null })
     }, session.id)
   }
 
@@ -299,6 +442,9 @@ export default function DemoPage() {
     const selectedRank = feed?.items.find(
       (item): item is ShadowDemoPublicFeedItem => item.visibility === "public" && item.post.uri === postUri,
     )?.rank ?? null
+    if (resumeHint.current?.sessionId === sessionId) {
+      persistResume({ ...resumeHint.current, selection: { postUri, epochId }, nextEpochId: null, mobileView: "receipt" })
+    }
     setSelectedUri(postUri)
     setReceipt(null)
     setMobileView("receipt")
@@ -326,18 +472,16 @@ export default function DemoPage() {
 
   function handleReset(): void {
     requestCoordinator.current.cancel()
+    persistResume(null)
+    setResumeSessionId(null)
+    resetSessionState()
     setBusy(false)
-    setSession(null)
-    setCommunity(null)
-    setOpenEpochId(null)
-    setPublishedEpoch(null)
-    setBaselineFeed(null)
-    setStartingNextEpoch(false)
-    setFreePlayEnabled(false)
-    clearRoundState()
     setError(null)
-    setSessionWarnings([])
-    setReceiptAnnouncement("")
+  }
+
+  function changeMobileView(view: "feed" | "receipt"): void {
+    setMobileView(view)
+    if (resumeHint.current !== null) persistResume({ ...resumeHint.current, mobileView: view })
   }
 
   function handleAnotherEpoch(): void {
@@ -350,6 +494,9 @@ export default function DemoPage() {
     }
     setBaselineFeed(feedAfter)
     clearRoundState()
+    if (resumeHint.current?.sessionId === session.id) {
+      persistResume({ ...resumeHint.current, nextEpochId: publishedEpoch.id, selection: null, mobileView: "feed" })
+    }
   }
 
   const selectedItem =
@@ -388,7 +535,7 @@ export default function DemoPage() {
     ) : phase === "corpus_ready" ? (
       <VotePanel
         onSubmit={handleVote}
-        busy={busy}
+        busy={busy || resumeSessionId !== null}
         topicCatalog={topicCatalog}
         baselineTopicIntent={baselineTopicIntent}
         contentRulesEnabled={session?.contentRulesEnabled === true}
@@ -402,7 +549,7 @@ export default function DemoPage() {
         aggregate={pendingAggregate}
         onRun={handleRunAgents}
         onAdvance={handleAdvance}
-        busy={busy}
+        busy={busy || resumeSessionId !== null}
         topicCatalog={topicCatalog}
         baselineTopicIntent={baselineTopicIntent}
       />
@@ -448,7 +595,6 @@ export default function DemoPage() {
               <button
                 type="button"
                 onClick={handleReset}
-                disabled={busy}
                 className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-semibold text-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -458,6 +604,14 @@ export default function DemoPage() {
           ) : null}
         </div>
 
+        {storageWarning !== null ? <p role="status" className="mt-5 text-sm text-foreground/70">{storageWarning}</p> : null}
+        {resumeSessionId !== null ? (
+          <div role="status" className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-border px-4 py-3 text-sm">
+            <span>{busy ? "Restoring your demo from the server…" : "A demo session can be restored. No votes or epoch changes will be repeated."}</span>
+            <button type="button" disabled={busy} onClick={() => void retryResume(resumeSessionId)} className="rounded-full border border-border px-3 py-2 font-semibold">Restore demo session</button>
+            <button type="button" onClick={handleReset} className="rounded-full border border-border px-3 py-2 font-semibold">Start a new session</button>
+          </div>
+        ) : null}
         {error !== null ? (
           <div role="alert" className="mt-5 flex items-start gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
@@ -482,7 +636,7 @@ export default function DemoPage() {
                 exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
                 transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
               >
-                <CommunityPicker onStart={handleStart} busy={busy} />
+                <CommunityPicker onStart={handleStart} busy={busy || resumeSessionId !== null} />
               </motion.div>
             ) : (
               <motion.div
@@ -497,7 +651,7 @@ export default function DemoPage() {
                   <div className="order-1 grid grid-cols-2 rounded-lg border border-border bg-biscuit/25 p-1 xl:hidden">
                     <button
                       type="button"
-                      onClick={() => setMobileView("feed")}
+                      onClick={() => changeMobileView("feed")}
                       aria-pressed={mobileView === "feed"}
                       className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${mobileView === "feed" ? "bg-background text-foreground shadow-sm" : "text-foreground/60"}`}
                     >
@@ -506,7 +660,7 @@ export default function DemoPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMobileView("receipt")}
+                      onClick={() => changeMobileView("receipt")}
                       aria-pressed={mobileView === "receipt"}
                       className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${mobileView === "receipt" ? "bg-background text-foreground shadow-sm" : "text-foreground/60"}`}
                     >

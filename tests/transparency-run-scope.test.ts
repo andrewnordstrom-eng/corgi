@@ -1,11 +1,20 @@
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { publicEligibilityMock } = vi.hoisted(() => ({ publicEligibilityMock: vi.fn() }));
+vi.mock('../src/transparency/public-post-eligibility.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/transparency/public-post-eligibility.js')>()),
+  assertPublicPostEligibility: publicEligibilityMock,
+  PublicPostEligibilityError: class extends Error {},
+}));
+
+
 const { dbQueryMock } = vi.hoisted(() => ({
   dbQueryMock: vi.fn(),
 }));
-const { redisGetMock } = vi.hoisted(() => ({
+const { redisGetMock, redisEvalMock } = vi.hoisted(() => ({
   redisGetMock: vi.fn(),
+  redisEvalMock: vi.fn(),
 }));
 
 vi.mock('../src/db/client.js', () => ({
@@ -17,6 +26,7 @@ vi.mock('../src/db/client.js', () => ({
 vi.mock('../src/db/redis.js', () => ({
   redis: {
     get: redisGetMock,
+    eval: redisEvalMock,
   },
 }));
 
@@ -84,8 +94,13 @@ function mockFeedStatsDbQueries(options: FeedStatsDbMockOptions): void {
 
 describe('transparency routes current-run scoping', () => {
   beforeEach(() => {
+    publicEligibilityMock.mockReset().mockResolvedValue(undefined);
     dbQueryMock.mockReset();
     redisGetMock.mockReset();
+    redisEvalMock.mockReset().mockResolvedValue(JSON.stringify({
+      snapshots: [{ snapshotStatus: 'current', found: false }],
+      pinnedAnnouncement: null,
+    }));
   });
 
   it('serves feed stats from materialized epoch metrics without request-time score scans', async () => {

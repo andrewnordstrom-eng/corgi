@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildAppViewGetPostsUrl, hydrateCorpusItemsWithAppView } from '../src/demo/appview.js';
 import {
   bskyPostUrlFromAtUri,
@@ -412,6 +412,64 @@ describe('shadow demo public-view filtering', () => {
       kind: 'hidden_post',
       reason: 'Post unavailable from Bluesky public AppView',
     });
+  });
+
+  it('rejects author identity mismatch, duplicate and unrequested records without exposing neighbors', async () => {
+    expect(publicPostFromAppView({ ...PUBLIC_POST, author: { ...PUBLIC_POST.author, did: 'did:plc:other' } }).kind).toBe('hidden_post');
+    for (const posts of [[PUBLIC_POST, PUBLIC_POST], [{ ...PUBLIC_POST, uri: 'at://did:plc:other/app.bsky.feed.post/unrequested' }]]) {
+      const result = await hydrateCorpusItemsWithAppView({ items: [corpusItem(PUBLIC_POST.uri as string)], timeoutMs: 1000,
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ posts }) }),
+      });
+      expect(result[0].displayPost.kind).toBe('hidden_post');
+    }
+  });
+
+  it('withholds oversized bodies and preserves a construction-time CID for unreviewed live inputs', async () => {
+    const items = [corpusItem(PUBLIC_POST.uri as string)];
+    const oversized = await hydrateCorpusItemsWithAppView({ items, timeoutMs: 1000,
+      fetchFn: async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(1024 * 1024 + 1) }),
+    });
+    expect(oversized[0].displayPost.kind).toBe('hidden_post');
+    const valid = await hydrateCorpusItemsWithAppView({ items, timeoutMs: 1000,
+      fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ posts: [PUBLIC_POST] }) }),
+    });
+    expect(valid[0].reviewedCid).toBe(PUBLIC_POST.cid);
+  });
+
+  it('cancels an oversized streamed body and aborts its completed request scope', async () => {
+    let canceled = false;
+    let signal: AbortSignal | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(1024 * 1024 + 1)); },
+      cancel() { canceled = true; },
+    });
+    const result = await hydrateCorpusItemsWithAppView({ items: [corpusItem(PUBLIC_POST.uri as string)], timeoutMs: 1000,
+      fetchFn: async (_url, init) => {
+        signal = init.signal;
+        return { ok: true, status: 200, body, text: async () => { throw new Error('Streaming transport must not buffer text'); } };
+      },
+    });
+    expect(result[0].displayPost.kind).toBe('hidden_post');
+    expect(canceled).toBe(true);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('shares one monotonic deadline across batches instead of multiplying the timeout', async () => {
+    let elapsed = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const fetchFn = vi.fn(async (url: string) => {
+      elapsed = 100;
+      const posts = new URL(url).searchParams.getAll('uris').map((uri) => ({ ...PUBLIC_POST, uri }));
+      return { ok: true, status: 200, text: async () => JSON.stringify({ posts }) };
+    });
+    try {
+      const result = await hydrateCorpusItemsWithAppView({
+        items: Array.from({ length: 26 }, (_, i) => corpusItem(`at://did:plc:author/app.bsky.feed.post/${i}`)),
+        timeoutMs: 50, fetchFn,
+      });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(result[25].displayPost.kind).toBe('hidden_post');
+    } finally { clock.mockRestore(); }
   });
 
   it('binds reviewed snapshot posts to their immutable record CIDs', async () => {

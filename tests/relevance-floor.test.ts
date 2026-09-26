@@ -69,6 +69,7 @@ vi.mock('../src/admin/status-tracker.js', () => ({
 }));
 
 import { runScoringPipeline, __resetPipelineState } from '../src/scoring/pipeline.js';
+import { buildFeedPublicationRow } from './helpers/feed-publication.js';
 
 function makeEpochRow() {
   return {
@@ -88,7 +89,7 @@ function makeEpochRow() {
 
 /** Helper: find the writeToRedisFromDb call by looking for the SELECT post_uri query. */
 function findWriteToRedisCall(): [string, unknown[]] | null {
-  for (const call of dbQueryMock.mock.calls) {
+  for (const call of clientQueryMock.mock.calls) {
     const queryText = String(call[0]);
     if (queryText.includes('SELECT ps.post_uri') && queryText.includes('post_scores')) {
       return [queryText, call[1] as unknown[]];
@@ -118,6 +119,8 @@ describe('relevance floor in feed output', () => {
       del: pipelineDelMock.mockReturnThis(),
       expire: vi.fn().mockReturnThis(),
       zadd: pipelineZaddMock.mockReturnThis(),
+      rpush: vi.fn().mockReturnThis(),
+      hset: vi.fn().mockReturnThis(),
       set: pipelineSetMock.mockReturnThis(),
       exec: pipelineExecMock.mockResolvedValue([]),
     };
@@ -136,6 +139,18 @@ describe('relevance floor in feed output', () => {
     });
     hasActiveContentRulesMock.mockReturnValue(false);
   });
+
+  function mockStagedFeedRows(rows: ReturnType<typeof buildFeedPublicationRow>[]): void {
+    clientQueryMock.mockImplementation((sql: string) => {
+      if (sql.includes('pending_rescore_generation')) {
+        return Promise.resolve({ rows: [{ pending_rescore_generation: null }] });
+      }
+      if (sql.includes('FROM post_scores ps')) {
+        return Promise.resolve({ rows });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+  }
 
   it('SQL query contains relevance_score >= parameter', async () => {
     // No posts → pipeline skips scoring, goes straight to writeToRedisFromDb
@@ -202,15 +217,15 @@ describe('relevance floor in feed output', () => {
 
   it('includes posts returned by DB query in Redis feed', async () => {
     const feedPosts = [
-      { post_uri: 'at://did:plc:test/post/high', total_score: 0.85 },
+      buildFeedPublicationRow({ post_uri: 'at://did:plc:test/post/high', total_score: 0.85 }),
     ];
 
     // No posts to score, but writeToRedisFromDb returns 1 post
     dbQueryMock
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })                     // no posts to score
-      .mockResolvedValueOnce({ rows: feedPosts })               // writeToRedisFromDb
       .mockResolvedValueOnce({ rows: [] });
+    mockStagedFeedRows(feedPosts);
 
     await runScoringPipeline();
 
@@ -227,15 +242,15 @@ describe('relevance floor in feed output', () => {
 
   it('writes correct metadata count for multiple posts', async () => {
     const feedPosts = [
-      { post_uri: 'at://post/1', total_score: 0.9 },
-      { post_uri: 'at://post/2', total_score: 0.7 },
+      buildFeedPublicationRow({ post_uri: 'at://post/1', total_score: 0.9 }),
+      buildFeedPublicationRow({ post_uri: 'at://post/2', total_score: 0.7 }),
     ];
 
     dbQueryMock
       .mockResolvedValueOnce({ rows: [makeEpochRow()] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: feedPosts })
       .mockResolvedValueOnce({ rows: [] });
+    mockStagedFeedRows(feedPosts);
 
     await runScoringPipeline();
 

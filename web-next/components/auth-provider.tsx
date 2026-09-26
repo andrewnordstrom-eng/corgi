@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { usePathname } from "next/navigation"
 import { authApi, type AuthenticatedSessionResponse } from "@/lib/api/client"
 import { AuthRequestCoordinator } from "@/lib/auth-request"
 
@@ -27,7 +28,9 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
+  const pathname = usePathname()
   const loginRequests = useRef(new AuthRequestCoordinator())
+  const sessionProbeEnabled = pathname !== "/feed" && !pathname.startsWith("/feed/")
 
   useEffect(() => () => loginRequests.current.cancel(), [])
 
@@ -37,6 +40,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryKey: SESSION_QUERY_KEY,
     queryFn: authApi.getSession,
     retry: false,
+    // /feed is an intentionally anonymous transparency surface. It must not
+    // probe auth merely to render public ranking evidence.
+    enabled: sessionProbeEnabled,
   })
 
   // Deliberately NOT a useMutation: mutation variables are retained in the
@@ -69,7 +75,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear()
   }, [queryClient])
 
-  const sessionResponse = sessionQuery.data
+  // A disabled query may still expose data retained in the query cache. The
+  // anonymous feed must not inherit that authenticated state.
+  const sessionResponse = sessionProbeEnabled ? sessionQuery.data : undefined
   const session: AuthenticatedSessionResponse | null =
     sessionResponse?.authenticated === true ? sessionResponse : null
   const isAuthenticated = session !== null
@@ -78,12 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       session,
       isAuthenticated,
-      isLoading: sessionQuery.isLoading,
+      isLoading: sessionProbeEnabled && sessionQuery.isLoading,
       login,
       cancelLogin,
       logout,
     }),
-    [session, isAuthenticated, sessionQuery.isLoading, login, cancelLogin, logout]
+    [session, isAuthenticated, sessionProbeEnabled, sessionQuery.isLoading, login, cancelLogin, logout]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

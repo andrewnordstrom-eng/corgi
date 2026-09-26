@@ -6,7 +6,6 @@ import {
   CORGI_COMMUNITY_FEED_URI,
   fetchLiveDemoData,
   normalizeAppViewFeed,
-  publicDemoHiddenReason,
   scoreComponentsFromExplanation,
   selectReceiptPost,
   topicBreakdownFromExplanation,
@@ -97,16 +96,6 @@ describe('web-next live demo data helpers', () => {
     expect(url.searchParams.getAll('uris')).toEqual([]);
   });
 
-  it('maps Bluesky public-view labels to hidden demo rows', () => {
-    expect(publicDemoHiddenReason(['!no-unauthenticated'], true)).toBe(
-      'Post hidden by Bluesky public-view policy',
-    );
-    expect(publicDemoHiddenReason(['!hide'], true)).toBe('Post hidden by Bluesky public-view policy');
-    expect(publicDemoHiddenReason(['porn'], true)).toBe('Post hidden by Bluesky adult-content policy');
-    expect(publicDemoHiddenReason([], false)).toBe('Post unavailable from Bluesky public view');
-    expect(publicDemoHiddenReason([], true)).toBeNull();
-  });
-
   it('normalizes AppView feed items without exposing hidden post text or identity', () => {
     const normalized = normalizeAppViewFeed({
       cursor: 'cursor-1',
@@ -115,6 +104,7 @@ describe('web-next live demo data helpers', () => {
           post: {
             uri: 'at://did:plc:public/app.bsky.feed.post/3one',
             author: {
+              did: 'did:plc:public',
               handle: 'public-user.bsky.social',
               displayName: 'Public User',
               avatar: 'https://cdn.example/avatar.jpg',
@@ -131,9 +121,10 @@ describe('web-next live demo data helpers', () => {
           post: {
             uri: 'at://did:plc:hidden/app.bsky.feed.post/3two',
             author: {
+              did: 'did:plc:hidden',
               handle: 'hidden-user.bsky.social',
               displayName: 'Hidden User',
-              labels: [{ val: '!no-unauthenticated' }],
+              labels: [{ val: '  !HiDe  ' }],
             },
             record: { text: 'This text must not render.' },
           },
@@ -142,6 +133,7 @@ describe('web-next live demo data helpers', () => {
           post: {
             uri: 'at://did:plc:adult/app.bsky.feed.post/3three',
             author: {
+              did: 'did:plc:adult',
               handle: 'adult-user.bsky.social',
               displayName: 'Adult User',
             },
@@ -174,21 +166,74 @@ describe('web-next live demo data helpers', () => {
       uri: null,
       authorHandle: null,
       text: null,
-      hiddenReason: 'Post hidden by Bluesky adult-content policy',
+      hiddenReason: 'Post hidden by Bluesky public-view policy',
     });
   });
 
-  it('rejects malformed AppView top-level and item shapes', () => {
+  it('keeps unavailable or invalid AppView posts as hidden placeholders', () => {
+    const normalized = normalizeAppViewFeed({
+      feed: [
+        { post: null },
+        {
+          post: {
+            uri: 'at://did:plc:missing-text/app.bsky.feed.post/3four',
+            author: { did: 'did:plc:missing-text', handle: 'missing-text.example' },
+            record: {},
+          },
+        },
+        {
+          post: {
+            uri: 'at://did:plc:bad-label/app.bsky.feed.post/3five',
+            author: { did: 'did:plc:bad-label', handle: 'bad-label.example' },
+            record: { text: 'Must remain hidden.' },
+            labels: [{ val: 5 }],
+          },
+        },
+        {
+          post: {
+            uri: 'at://did:plc:empty-label/app.bsky.feed.post/3six',
+            author: { did: 'did:plc:empty-label', handle: 'empty-label.example' },
+            record: { text: 'An empty label does not hide valid text.' },
+            labels: [{ val: '' }],
+          },
+        },
+      ],
+    } as never);
+
+    expect(normalized.posts.slice(0, 3).map((post) => post.visibility)).toEqual([
+      'hidden', 'hidden', 'hidden',
+    ]);
+    expect(normalized.posts[0]).toMatchObject({
+      text: null,
+      hiddenReason: 'Post unavailable from Bluesky public view',
+    });
+    expect(normalized.posts[1]).toMatchObject({
+      text: null,
+      hiddenReason: 'Post unavailable from Bluesky public view',
+    });
+    expect(normalized.posts[2]).toMatchObject({
+      text: null,
+      hiddenReason: 'Post visibility labels are invalid',
+    });
+    expect(normalized.posts[3]).toMatchObject({ visibility: 'public' });
+  });
+
+  it('rejects malformed feed item shapes and keeps invalid post values as placeholders', () => {
     expect(() => normalizeAppViewFeed(null as never)).toThrow(LiveDemoDataError);
     expect(() => normalizeAppViewFeed({ feed: [null] } as never)).toThrow(LiveDemoDataError);
-    expect(() => normalizeAppViewFeed({ feed: [{ post: 'not-an-object' }] } as never)).toThrow(LiveDemoDataError);
+    expect(normalizeAppViewFeed({ feed: [{ post: 'not-an-object' }] } as never).posts[0]).toMatchObject({
+      visibility: 'hidden',
+      text: null,
+      hiddenReason: 'Post unavailable from Bluesky public view',
+    });
   });
 
   it('selects no receipt post when every AppView row is hidden', () => {
     const normalized = normalizeAppViewFeed({
       feed: [{
         post: {
-          author: { handle: 'hidden.bsky.social', labels: [{ val: '!no-unauthenticated' }] },
+          uri: 'at://did:plc:hidden/app.bsky.feed.post/3zero',
+          author: { did: 'did:plc:hidden', handle: 'hidden.bsky.social', labels: [{ val: '!no-unauthenticated' }] },
           record: { text: 'Withheld text.' },
         },
       }],
@@ -224,6 +269,7 @@ describe('web-next live demo data helpers', () => {
           post: {
             uri: 'at://did:plc:hidden/app.bsky.feed.post/3one',
             author: {
+              did: 'did:plc:hidden',
               handle: 'hidden-user.bsky.social',
               labels: [{ val: '!no-unauthenticated' }],
             },
@@ -234,6 +280,7 @@ describe('web-next live demo data helpers', () => {
           post: {
             uri: 'at://did:plc:visible/app.bsky.feed.post/3two',
             author: {
+              did: 'did:plc:visible',
               handle: 'visible-user.bsky.social',
               displayName: 'Visible User',
             },

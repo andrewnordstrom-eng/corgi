@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact candidate commit to qualify
+        required: true
+        type: string
   pull_request:
     branches:
       - main
@@ -9,7 +15,7 @@ on:
       - main
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'continuous' }}
   cancel-in-progress: true
 
 permissions:
@@ -29,7 +35,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
+
+      - name: Pin and verify Node.js and npm
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.2"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            const runtime = { node: process.version, arch: process.arch, platform: process.platform,
+              abi: process.versions.modules, glibc: process.report.getReport().header.glibcVersionRuntime };
+            assert.equal(runtime.node, "v22.23.2");
+            assert.equal(runtime.platform, "linux");
+            assert.equal(runtime.arch, "x64");
+            assert.equal(runtime.abi, "127");
+            assert.ok(runtime.glibc);
+            console.log(JSON.stringify(runtime));
+          '
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
 
       - name: Verify docs freshness and integrity
         run: npm run docs:verify
@@ -47,11 +71,47 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
           cache: "npm"
           cache-dependency-path: |
             package-lock.json
             cli/package-lock.json
+
+      - name: Pin and verify Node.js and npm
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.2"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            const runtime = { node: process.version, arch: process.arch, platform: process.platform,
+              abi: process.versions.modules, glibc: process.report.getReport().header.glibcVersionRuntime };
+            assert.equal(runtime.node, "v22.23.2");
+            assert.equal(runtime.platform, "linux");
+            assert.equal(runtime.arch, "x64");
+            assert.equal(runtime.abi, "127");
+            assert.ok(runtime.glibc);
+            console.log(JSON.stringify(runtime));
+          '
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Bind source and dependency locks before install
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          fi
+          locks=(package-lock.json cli/package-lock.json web/package-lock.json web-next/package-lock.json packages/feed-sdk/package-lock.json examples/civility-component/package-lock.json)
+          for lock in "${locks[@]}"; do
+            test -f "$lock" && test ! -L "$lock"
+            git ls-files --error-unmatch -- "$lock" > /dev/null
+          done
+          git diff --exit-code HEAD -- "${locks[@]}"
+          sha256sum "${locks[@]}" | tee "$RUNNER_TEMP/corgi-${GITHUB_JOB}-locks.sha256"
+          printf 'source=%s run=%s attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
 
       - name: Install backend dependencies
         run: npm ci --ignore-scripts
@@ -81,6 +141,26 @@ jobs:
         working-directory: cli
         run: node ../scripts/audit-allowlist.mjs --workspace=cli --audit-level=moderate
 
+      - name: Verify source and dependency locks after validation
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sha256sum --check "$RUNNER_TEMP/corgi-${GITHUB_JOB}-locks.sha256"
+
+      - name: Retain native qualification receipts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # existing deploy artifact pin
+        with:
+          name: route-b-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/corgi-backend-verify-locks.sha256
+            ${{ runner.temp }}/corgi-runtime-image.id
+            ${{ runner.temp }}/corgi-image-startup/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
   frontend-verify:
     name: frontend-verify
     runs-on: ubuntu-latest
@@ -94,11 +174,47 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20.19.0"
+          node-version: "22.23.2"
           cache: "npm"
           cache-dependency-path: |
             web/package-lock.json
             web-next/package-lock.json
+
+      - name: Pin and verify Node.js and npm
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.2"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            const runtime = { node: process.version, arch: process.arch, platform: process.platform,
+              abi: process.versions.modules, glibc: process.report.getReport().header.glibcVersionRuntime };
+            assert.equal(runtime.node, "v22.23.2");
+            assert.equal(runtime.platform, "linux");
+            assert.equal(runtime.arch, "x64");
+            assert.equal(runtime.abi, "127");
+            assert.ok(runtime.glibc);
+            console.log(JSON.stringify(runtime));
+          '
+          npm install --global --ignore-scripts npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Bind source and dependency locks before install
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          fi
+          locks=(package-lock.json cli/package-lock.json web/package-lock.json web-next/package-lock.json packages/feed-sdk/package-lock.json examples/civility-component/package-lock.json)
+          for lock in "${locks[@]}"; do
+            test -f "$lock" && test ! -L "$lock"
+            git ls-files --error-unmatch -- "$lock" > /dev/null
+          done
+          git diff --exit-code HEAD -- "${locks[@]}"
+          sha256sum "${locks[@]}" | tee "$RUNNER_TEMP/corgi-${GITHUB_JOB}-locks.sha256"
+          printf 'source=%s run=%s attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
 
       - name: Install frontend dependencies
         run: cd web && npm ci --ignore-scripts
@@ -156,6 +272,13 @@ jobs:
       - name: Security audit (Next.js frontend)
         working-directory: web-next
         run: node ../scripts/audit-allowlist.mjs --workspace=web-next --audit-level=moderate
+
+      - name: Verify source and dependency locks after validation
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sha256sum --check "$RUNNER_TEMP/corgi-${GITHUB_JOB}-locks.sha256"
 
   report-scripts-verify:
     name: report-scripts-verify

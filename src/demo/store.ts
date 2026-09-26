@@ -1,9 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { z, type ZodTypeAny } from 'zod';
 import { logger } from '../lib/logger.js';
+import { communityGovManifestDigest } from '../feed/demo-snapshot-source.js';
+import approvedManifestJson from './community-gov-release-snapshot.json' with { type: 'json' };
+import { DEMO_VISIBILITY_POLICY_VERSION } from './public-view.js';
 import {
   SHADOW_DEMO_COMMUNITY_IDS,
+  SHADOW_DEMO_V4_CONTRACT_VERSION,
   SHADOW_DEMO_MAX_EXCLUDE_KEYWORDS,
   SHADOW_DEMO_MAX_EXCLUDE_KEYWORD_LENGTH,
   SHADOW_DEMO_TOTAL_DEMO_VOTERS,
@@ -90,6 +94,7 @@ const StoredDisplayPostSchema = z.discriminatedUnion('kind', [
 
 const StoredCorpusItemSchema = z.object({
   postUri: z.string().min(1),
+  reviewedCid: z.string().trim().min(1).nullable().optional(),
   authorDid: z.string().min(1).nullable(),
   createdAt: z.string().min(1),
   topicVector: z.record(z.number().finite()),
@@ -300,6 +305,7 @@ export interface DemoStore {
   readIdempotency<TPayload>(sessionId: string, key: string): Promise<IdempotencyRecord<TPayload> | null>;
   readSharedCorpus(communityId: ShadowDemoCommunityId): Promise<ShadowDemoCorpus | null>;
   writeSharedCorpus(communityId: ShadowDemoCommunityId, corpus: ShadowDemoCorpus, ttlSeconds: number): Promise<void>;
+  commitSharedCorpus(communityId: ShadowDemoCommunityId, token: string, corpus: ShadowDemoCorpus, ttlSeconds: number): Promise<boolean>;
   acquireCorpusBuildLock(communityId: ShadowDemoCommunityId, token: string, ttlMs: number): Promise<boolean>;
   renewCorpusBuildLock(communityId: ShadowDemoCommunityId, token: string, ttlMs: number): Promise<boolean>;
   releaseCorpusBuildLock(communityId: ShadowDemoCommunityId, token: string): Promise<void>;
@@ -476,6 +482,24 @@ export class RedisDemoStore implements DemoStore {
     );
   }
 
+  async commitSharedCorpus(
+    communityId: ShadowDemoCommunityId,
+    token: string,
+    corpus: ShadowDemoCorpus,
+    ttlSeconds: number
+  ): Promise<boolean> {
+    const committed = await this.runRedisCommand('commit shared corpus', () => this.redis.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end; redis.call('setex', KEYS[2], ARGV[2], ARGV[3]); return 1",
+      2,
+      corpusBuildLockKey(communityId),
+      sharedCorpusKey(communityId),
+      token,
+      ttlSeconds,
+      JSON.stringify(corpus)
+    ));
+    return committed === 1;
+  }
+
   async acquireCorpusBuildLock(communityId: ShadowDemoCommunityId, token: string, ttlMs: number): Promise<boolean> {
     const result = await this.runRedisCommand('acquire corpus build lock', () =>
       this.redis.set(corpusBuildLockKey(communityId), token, 'PX', ttlMs, 'NX')
@@ -605,7 +629,7 @@ export class MemoryDemoStore implements DemoStore {
   private readonly sessions = new Map<string, ShadowDemoSessionState>();
   private readonly sessionIdsByClientNonce = new Map<string, string>();
   private readonly idempotency = new Map<string, IdempotencyRecord<unknown>>();
-  private readonly sharedCorpus = new Map<ShadowDemoCommunityId, ShadowDemoCorpus>();
+  private readonly sharedCorpus = new Map<string, ShadowDemoCorpus>();
   private readonly locks = new Map<string, string>();
 
   async readSession(sessionId: string): Promise<ShadowDemoSessionState | null> {
@@ -669,7 +693,7 @@ export class MemoryDemoStore implements DemoStore {
   }
 
   async readSharedCorpus(communityId: ShadowDemoCommunityId): Promise<ShadowDemoCorpus | null> {
-    return this.sharedCorpus.get(communityId) ?? null;
+    return this.sharedCorpus.get(sharedCorpusKey(communityId)) ?? null;
   }
 
   async writeSharedCorpus(
@@ -677,7 +701,19 @@ export class MemoryDemoStore implements DemoStore {
     corpus: ShadowDemoCorpus,
     _ttlSeconds: number
   ): Promise<void> {
-    this.sharedCorpus.set(communityId, JSON.parse(JSON.stringify(corpus)) as ShadowDemoCorpus);
+    this.sharedCorpus.set(sharedCorpusKey(communityId), JSON.parse(JSON.stringify(corpus)) as ShadowDemoCorpus);
+  }
+
+  async commitSharedCorpus(
+    communityId: ShadowDemoCommunityId,
+    token: string,
+    corpus: ShadowDemoCorpus,
+    _ttlSeconds: number
+  ): Promise<boolean> {
+    if (this.locks.get(corpusBuildLockKey(communityId)) !== token) return false;
+    // No await between ownership comparison and publication.
+    this.sharedCorpus.set(sharedCorpusKey(communityId), JSON.parse(JSON.stringify(corpus)) as ShadowDemoCorpus);
+    return true;
   }
 
   async acquireCorpusBuildLock(communityId: ShadowDemoCommunityId, token: string, _ttlMs: number): Promise<boolean> {
@@ -841,7 +877,11 @@ function corpusKey(corpusId: string): string {
 }
 
 function sharedCorpusKey(communityId: ShadowDemoCommunityId): string {
-  return `${demoSharedCorpusKeyPrefix()}${communityId}`;
+  return `${demoSharedCorpusKeyPrefix()}${communityId}:${demoSharedCorpusIdentity(
+    communityId,
+    communityGovManifestDigest(approvedManifestJson),
+    DEMO_VISIBILITY_POLICY_VERSION
+  )}`;
 }
 
 function idempotencyKey(sessionId: string, key: string): string {
@@ -865,5 +905,18 @@ function lockKey(sessionId: string): string {
 }
 
 function corpusBuildLockKey(communityId: ShadowDemoCommunityId): string {
-  return `${demoLockKeyPrefix()}corpus:${communityId}`;
+  return `${demoLockKeyPrefix()}corpus:${sharedCorpusKey(communityId)}`;
+}
+
+export function demoSharedCorpusIdentity(
+  communityId: ShadowDemoCommunityId,
+  approvedManifestDigest: string,
+  visibilityPolicyVersion: string
+): string {
+  return createHash('sha256').update(JSON.stringify([
+    SHADOW_DEMO_V4_CONTRACT_VERSION,
+    communityId,
+    communityId === 'community_gov' ? approvedManifestDigest : null,
+    visibilityPolicyVersion,
+  ])).digest('hex');
 }

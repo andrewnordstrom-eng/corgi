@@ -122,13 +122,17 @@ npm run demo:approve-community-gov -- \
 
 ## Bluesky Public View
 
-AppView hydration supports image galleries with alt text/aspect ratios, external cards, quoted-post summaries, record-with-media combinations, and non-autoplay video posters. `!no-unauthenticated`, `!hide`, takedown, adult-only, malformed, deleted, unavailable, missing-text, reviewer-safety language results, CID changes, and records withheld at review time are withheld. Recursive labels and the reviewed CID are evaluated before text, identity, nested quote, or media fields are exposed.
+AppView hydration supports image galleries with alt text/aspect ratios, external cards, quoted-post summaries, record-with-media combinations, and non-autoplay video posters. `!no-unauthenticated`, `!hide`, takedown, adult-only, malformed, deleted, unavailable, missing-text, reviewer-safety language results, CID changes, and records withheld at review time are withheld. Recursive labels and the reviewed CID are evaluated before text, identity, nested quote, or media fields are exposed. Feed and withheld rows, receipts, and generated keyword suggestions revalidate current public display eligibility on each response, including shared-corpus reuse and idempotent mutation replay. Current AppView metadata and positive local deletion/denial evidence control disclosure; lookup failures withhold content. Route B reads the retained legacy posts table: a retained row must be uniquely live and match the reviewed CID; deleted, changed-CID or ambiguous retained state withholds display. An absent retained row is not treated as deletion when exact approved snapshot provenance and fresh matching-CID AppView visibility are established. No lifecycle-version table or missing-table fallback is used. This observes those authorities at request time and does not promise instantaneous global propagation.
+
+Frozen cohort membership, scores, rank slots, policy-rule inputs, provenance and movement remain unchanged by display validation. Ranking is computed first; a currently ineligible post becomes a content-free hidden slot without compacting ranks. Historical corpus-health counts describe capture eligibility, not a fresh display count. Historical user-entered ballots remain unchanged; only generated keyword suggestions use current permitted display. Synthetic fixture mode stays explicit and offline. Demo responses use `Cache-Control: no-store`.
 
 Every public row has separate **Inspect ranking** and **Open on Bluesky** actions. Hidden rows expose no text, identity, thumbnail, quote, or source URL.
 
 ## Isolation And Recovery
 
-Demo state is Redis-only under `demo:session:*`, `demo:sessions:*`, `demo:corpus:*`, versioned shared-corpus keys under `demo:corpus:current:v4:*`, `demo:idempotency:*`, `demo:lock:*`, `demo:staging:*`, and `demo:rate-limit:*`. It uses the dedicated localhost-only demo Redis on port 6381 with 64 MB, `noeviction`, no persistence, and a 96 MB container limit.
+Demo state is Redis-only under `demo:session:*`, duplicate-creation-nonce mappings under `demo:session-nonce:*`, `demo:sessions:*`, `demo:corpus:*`, versioned shared-corpus keys under `demo:corpus:current:v4:*`, `demo:idempotency:*`, `demo:lock:*`, `demo:staging:*`, and `demo:rate-limit:*`. It uses the dedicated localhost-only demo Redis on port 6381 with 64 MB, `noeviction`, no persistence, and a 96 MB container limit.
+
+Reusing a creation nonce returns an explicit, non-retryable HTTP 409 conflict and never reveals an existing session ID. Recovery uses only an already-known session ID; it does not make creation-nonce replay safe.
 
 The demo never writes `governance_votes`, `governance_epochs`, `governance_audit_log`, `feed:current`, production snapshots, or research exports. Session mutations use a 15-second ownership token and an ownership-checked atomic Redis commit. Ambiguous client failures reconcile with `GET session`.
 
