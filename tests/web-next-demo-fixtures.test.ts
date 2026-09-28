@@ -66,6 +66,8 @@ const FORBIDDEN_PUBLIC_DOC_RECEIPT_PATTERNS = [
   { name: 'Bluesky handle', pattern: /[a-z0-9._-]+\.bsky\.social/i },
 ];
 
+const README_ALLOWED_HANDLES = new Set(['corgi-network.bsky.social']);
+
 const FORBIDDEN_PUBLIC_DOC_EXAMPLE_SECTION_PATTERNS = [
   { name: 'raw PLC DID', pattern: /did:plc:[a-z0-9]{20,}/i },
   { name: 'raw AT Protocol post URI', pattern: /at:\/\/did:plc:[a-z0-9]+\/app\.bsky\.feed\.post\/[a-z0-9]+/i },
@@ -314,6 +316,26 @@ describe('web-next demo receipt fixtures', () => {
         ).not.toMatch(forbiddenPattern.pattern);
       }
     }
+  });
+
+  it('keeps the whole README free of post identifiers outside the official account link', () => {
+    const readme = readFixtureFile(README_FILE);
+
+    // Fail loudly if the receipt moves, instead of scanning the wrong section.
+    expect(extractMarkdownSection(readme, 'How it works')).toContain('### A real receipt');
+
+    for (const forbiddenPattern of FORBIDDEN_PUBLIC_DOC_RECEIPT_PATTERNS) {
+      if (forbiddenPattern.name === 'Bluesky handle') {
+        continue;
+      }
+      expect(readme, `README.md contains ${forbiddenPattern.name}`).not.toMatch(forbiddenPattern.pattern);
+    }
+
+    // The README links Corgi's own account; any other handle is a leak.
+    const handles = readme.match(/[a-z0-9._-]+\.bsky\.social/gi) ?? [];
+    expect(
+      handles.filter((handle) => !README_ALLOWED_HANDLES.has(handle.toLowerCase())),
+    ).toEqual([]);
   });
 
   it('keeps the public post explanation section free of structural raw identifiers', () => {
