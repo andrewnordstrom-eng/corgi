@@ -2,11 +2,17 @@ import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { publicEligibilityMock } = vi.hoisted(() => ({ publicEligibilityMock: vi.fn() }));
-vi.mock('../src/transparency/public-post-eligibility.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/transparency/public-post-eligibility.js')>()),
-  assertPublicPostEligibility: publicEligibilityMock,
-  PublicPostEligibilityError: class extends Error {},
-}));
+vi.mock('../src/transparency/public-post-eligibility.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/transparency/public-post-eligibility.js')>();
+  class EligibilityError extends Error {}
+  class EligibilityDeniedError extends EligibilityError {}
+  return {
+    ...original,
+    assertPublicPostEligibility: publicEligibilityMock,
+    PublicPostEligibilityError: EligibilityError,
+    PublicPostEligibilityDeniedError: EligibilityDeniedError,
+  };
+});
 
 
 const { dbQueryMock } = vi.hoisted(() => ({
@@ -23,7 +29,7 @@ vi.mock('../src/db/client.js', () => ({
 vi.mock('../src/db/redis.js', () => ({ redis: { eval: redisEvalMock } }));
 
 import { config } from '../src/config.js';
-import { PublicPostEligibilityError } from '../src/transparency/public-post-eligibility.js';
+import { PublicPostEligibilityDeniedError, PublicPostEligibilityError } from '../src/transparency/public-post-eligibility.js';
 
 import { registerPostExplainRoute } from '../src/transparency/routes/post-explain.js';
 
@@ -241,14 +247,28 @@ describe('post explain URI validation', () => {
     await app.close();
   });
 
-  it('returns no-store503 for denied public eligibility without published or legacy fallback', async () => {
-    publicEligibilityMock.mockRejectedValue(new PublicPostEligibilityError('Synthetic denial', {}));
+  it('returns explicit not-publicly-viewable for denied receipts without published or legacy fallback', async () => {
+    publicEligibilityMock.mockRejectedValue(new PublicPostEligibilityDeniedError());
     const app = Fastify();
     registerPostExplainRoute(app);
     const uri = 'at://did:plc:test/app.bsky.feed.post/denied';
     const response = await app.inject({ method: 'GET', url: `/api/transparency/post/${encodeURIComponent(uri)}` });
-    expect(response.statusCode).toBe(503);
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: 'PostNotPubliclyViewable', message: 'This post is not publicly viewable.' });
     expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).not.toContain(uri);
+    expect(redisEvalMock).not.toHaveBeenCalled();
+    expect(dbQueryMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps unknown eligibility failures as no-store 503', async () => {
+    publicEligibilityMock.mockRejectedValue(new PublicPostEligibilityError('Synthetic unknown', {}));
+    const app = Fastify();
+    registerPostExplainRoute(app);
+    const uri = 'at://did:plc:test/app.bsky.feed.post/unknown';
+    const response = await app.inject({ method: 'GET', url: `/api/transparency/post/${encodeURIComponent(uri)}` });
+    expect(response.statusCode).toBe(503);
     expect(response.body).not.toContain(uri);
     expect(redisEvalMock).not.toHaveBeenCalled();
     expect(dbQueryMock).not.toHaveBeenCalled();

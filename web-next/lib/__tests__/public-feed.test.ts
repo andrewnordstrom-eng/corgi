@@ -5,12 +5,13 @@ import {
   PUBLIC_FEED_MAX_REQUESTS_PER_REFRESH,
   PUBLIC_FEED_SNAPSHOT_TIMEOUT_MS,
   loadPublicFeed,
+  isPublicFeedRow,
   publicFeedSnapshotSchema,
   retainSelectedUri,
   splitPostUris,
   strongestContribution,
 } from "../public-feed"
-import type { PublicFeedRankedItem, PublicFeedSnapshot } from "../public-feed"
+import type { PublicFeedItem, PublicFeedRankedItem, PublicFeedSnapshot } from "../public-feed"
 import {
   BlueskyPublicDataError,
   bskyPostUrlFromAtUri,
@@ -45,7 +46,7 @@ function rankedItem(position: number, uri: string): PublicFeedRankedItem {
   }
 }
 
-function snapshot(items: readonly PublicFeedRankedItem[]): PublicFeedSnapshot {
+function snapshot(items: readonly PublicFeedItem[]): PublicFeedSnapshot {
   return {
     schema_version: 1,
     feed_uri: "at://did:plc:test/app.bsky.feed.generator/community-gov",
@@ -167,7 +168,7 @@ describe("public feed contract", () => {
     expect(fetcher.mock.calls[0]?.[1]?.cache).toBe("no-store")
     expect(requestedHydrationUrls).toHaveLength(2)
     expect(peakHydrations).toBe(2)
-    expect(result.data.rows.map((row) => row.item.post_uri)).toEqual(items.map((item) => item.post_uri))
+    expect(result.data.rows.filter(isPublicFeedRow).map((row) => row.item.post_uri)).toEqual(items.map((item) => item.post_uri))
   })
 
   it("rejects 304 without a matching cached snapshot", async () => {
@@ -175,6 +176,73 @@ describe("public feed contract", () => {
     await expect(loadPublicFeed(new AbortController().signal, null, fetcher, null))
       .rejects.toMatchObject({ kind: "contract" })
     expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it("preserves generic withheld positions and never hydrates, selects, or stores their URI", async () => {
+    const first = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/public-a")
+    const withheld = {
+      position: 2,
+      placement: "withheld" as const,
+      reason: "Post withheld from the public view" as const,
+    }
+    const last = rankedItem(3, "at://did:plc:test/app.bsky.feed.post/public-b")
+    const privateUri = "at://did:plc:secret/app.bsky.feed.post/hidden"
+    const hydrationRequests: string[][] = []
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes("feed-snapshot")) {
+        return new Response(JSON.stringify(snapshot([first, withheld, last])), {
+          status: 200,
+          headers: { ETag: '"withheld-mask"' },
+        })
+      }
+      const uris = new URL(String(input)).searchParams.getAll("uris")
+      hydrationRequests.push(uris)
+      return new Response(JSON.stringify({ posts: uris.map(appViewPost) }), { status: 200 })
+    })
+
+    const result = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
+
+    expect(result.data.rows.map((row) => row.item.position)).toEqual([1, 2, 3])
+    expect(result.data.rows[1]).toEqual({ item: withheld, post: null })
+    expect(hydrationRequests.flat()).toEqual([first.post_uri, last.post_uri])
+    expect(hydrationRequests.flat().join(" ")).not.toContain(privateUri)
+    expect(JSON.stringify(result.data.rows[1])).not.toContain(privateUri)
+    expect(publicFeedSnapshotSchema.safeParse({ ...snapshot([first, withheld, last]), items: [
+      first, { ...withheld, post_uri: privateUri }, last,
+    ] }).success).toBe(false)
+    expect(retainSelectedUri("at://did:plc:secret/app.bsky.feed.post/hidden", result.data.rows)).toBe(first.post_uri)
+  })
+
+  it("replaces a same-publication visible row when the server returns a changed withholding mask", async () => {
+    const previouslyVisible = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/newly-withheld")
+    const remaining = rankedItem(2, "at://did:plc:test/app.bsky.feed.post/still-public")
+    const withheld = { position: 1, placement: "withheld" as const, reason: "Post withheld from the public view" as const }
+    let refresh = false
+    const hydrationRequests: string[][] = []
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes("feed-snapshot")) {
+        return new Response(JSON.stringify(refresh
+          ? snapshot([withheld, remaining])
+          : snapshot([previouslyVisible, remaining])), {
+          status: 200,
+          headers: { ETag: refresh ? '"mask-2"' : '"mask-1"' },
+        })
+      }
+      const uris = new URL(String(input)).searchParams.getAll("uris")
+      hydrationRequests.push(uris)
+      return new Response(JSON.stringify({ posts: uris.map(appViewPost) }), { status: 200 })
+    })
+    const initial = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
+    refresh = true
+
+    const changed = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data)
+
+    expect(changed.kind).toBe("loaded")
+    expect(changed.data.rows.map((row) => row.item.position)).toEqual([1, 2])
+    expect(changed.data.rows[0]).toEqual({ item: withheld, post: null })
+    expect(hydrationRequests.at(-1)).toEqual([remaining.post_uri])
+    expect(JSON.stringify(changed.data)).not.toContain(previouslyVisible.post_uri)
+    expect(retainSelectedUri(previouslyVisible.post_uri, changed.data.rows)).toBe(remaining.post_uri)
   })
 
   it.each(["deleted", "!hide", "!no-unauthenticated", "porn"])("rehydrates unchanged ranking and withdraws %s content", async (visibility) => {
@@ -192,21 +260,20 @@ describe("public feed contract", () => {
       }), { status: 200 })
     })
     const initial = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
-    expect(initial.data.rows[0].post.visibility).toBe("public")
+    expect(initial.data.rows[0].post?.visibility).toBe("public")
     refresh = true
     fetcher.mockClear()
-    await expect(loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data))
-      .rejects.toMatchObject({ kind: "unavailable", message: "Current public post visibility could not be verified" })
+    const refreshed = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data)
+    expect(refreshed.data.rows[0]).toMatchObject({ item: { placement: "withheld" }, post: null })
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("If-None-Match")).toBe(initial.data.etag)
     expect(fetcher.mock.calls[1]?.[1]?.cache).toBe("no-store")
   })
 
-  it("refreshes displayed visibility while a different ranking remains pending, then hydrates accepted order", async () => {
+  it("clears old content while a different ranking is pending, then hydrates accepted order", async () => {
     const a = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/a")
     const b = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/b")
     let refresh = false
-    let denyDisplayed = false
     const hydratedUris: string[][] = []
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       if (String(input).includes("feed-snapshot")) {
@@ -216,27 +283,26 @@ describe("public feed contract", () => {
       }
       const uris = new URL(String(input)).searchParams.getAll("uris")
       hydratedUris.push(uris)
-      return new Response(JSON.stringify({ posts: uris.filter((uri) => !denyDisplayed || uri !== a.post_uri).map(appViewPost) }), { status: 200 })
+      return new Response(JSON.stringify({ posts: uris.map(appViewPost) }), { status: 200 })
     })
     const initial = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
     refresh = true
     const update = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data)
-    expect(hydratedUris.at(-1)).toEqual([a.post_uri])
+    expect(hydratedUris).toHaveLength(1)
     expect(update.kind).toBe("pending")
     expect(update.pendingSnapshotId).toBe("snapshot-2")
-    expect(update.data.snapshot).toEqual(initial.data.snapshot)
+    expect(update.data.rows.every((row) => row.item.placement === "withheld")).toBe(true)
+    expect(update.displayedData).toBeNull()
+    expect(JSON.stringify(update)).not.toContain(a.post_uri)
     expect(JSON.stringify(update)).not.toContain(b.post_uri)
-    const repeat = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, update.displayedData)
+    const repeat = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data)
     expect(repeat.kind).toBe("pending")
-    expect(hydratedUris.at(-1)).toEqual([a.post_uri])
+    expect(hydratedUris).toHaveLength(1)
     const accepted = await loadPublicFeed(new AbortController().signal, initial.data, fetcher, null)
     expect(hydratedUris.at(-1)).toEqual([b.post_uri])
-    expect(accepted.data.rows[0].post.visibility).toBe("public")
+    expect(accepted.data.rows[0].post?.visibility).toBe("public")
     expect(accepted.data.snapshot.presentation_snapshot_id).toBe("snapshot-2")
     expect(accepted.data.requestCount).toBeLessThanOrEqual(PUBLIC_FEED_MAX_REQUESTS_PER_REFRESH)
-    denyDisplayed = true
-    await expect(loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data))
-      .rejects.toMatchObject({ kind: "unavailable" })
   })
 
   it("reports background 503 as unavailable without hydrating or silently reusing the cache", async () => {
@@ -266,7 +332,7 @@ describe("public feed contract", () => {
     expect(fetcher).toHaveBeenCalledTimes(3)
     expect(result.data.requestCount).toBe(3)
     expect(result.data.rows.map((row) => row.item)).toEqual(items)
-    expect(result.displayedData?.rows.every((row) => row.post.visibility === "public")).toBe(true)
+    expect(result.displayedData?.rows.every((row) => row.post !== null && row.post.visibility === "public")).toBe(true)
   })
 
   it("bounds the snapshot request and reports a timeout distinctly", async () => {
@@ -313,7 +379,7 @@ describe("public feed contract", () => {
     })
 
     const resultPromise = loadPublicFeed(new AbortController().signal, null, fetcher, null)
-    const rejection = expect(resultPromise).rejects.toMatchObject({ kind: "unavailable" })
+    const rejection = expect(resultPromise).rejects.toMatchObject({ kind: "request" })
     await vi.advanceTimersByTimeAsync(0)
     expect(fetcher).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(PUBLIC_FEED_APPVIEW_TIMEOUT_MS)
@@ -345,7 +411,7 @@ describe("public feed contract", () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it("rejects the entire snapshot when AppView omits a post", async () => {
+  it("withholds only an omitted hydration URI and scrubs it from retained snapshot state", async () => {
     const first = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/a")
     const second = rankedItem(2, "at://did:plc:test/app.bsky.feed.post/b")
     const fetcher = vi.fn<typeof fetch>(async (input) => {
@@ -354,8 +420,31 @@ describe("public feed contract", () => {
       }
       return new Response(JSON.stringify({ posts: [appViewPost(second.post_uri)] }), { status: 200 })
     })
-    await expect(loadPublicFeed(new AbortController().signal, null, fetcher, null))
-      .rejects.toMatchObject({ kind: "unavailable" })
+    const result = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
+    expect(result.data.rows.map((row) => row.item.position)).toEqual([1, 2])
+    expect(result.data.rows[0]).toMatchObject({ item: { placement: "withheld", position: 1 }, post: null })
+    expect(result.data.rows[1].item.position).toBe(2)
+    expect(JSON.stringify(result.data)).not.toContain(first.post_uri)
+  })
+
+  it("rechecks a locally withheld URI instead of reusing the upstream ETag", async () => {
+    const first = rankedItem(1, "at://did:plc:test/app.bsky.feed.post/recover")
+    let omit = true
+    const snapshotReads: Headers[] = []
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes("feed-snapshot")) {
+        snapshotReads.push(new Headers(init?.headers))
+        return new Response(JSON.stringify(snapshot([first])), { status: 200, headers: { ETag: '"same-publication"' } })
+      }
+      return new Response(JSON.stringify({ posts: omit ? [] : [appViewPost(first.post_uri)] }), { status: 200 })
+    })
+    const masked = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
+    expect(masked.data.rows[0]).toMatchObject({ item: { placement: "withheld" }, post: null })
+    expect(masked.data.etag).toBe("")
+    omit = false
+    const recovered = await loadPublicFeed(new AbortController().signal, masked.data, fetcher, masked.data)
+    expect(snapshotReads[1]?.get("If-None-Match")).toBeNull()
+    expect(recovered.data.rows[0].post?.visibility).toBe("public")
   })
 
   it.each(["duplicate", "unexpected", "malformed", "failure"])("rejects %s hydration without returning snapshot metadata", async (mode) => {
@@ -368,8 +457,7 @@ describe("public feed contract", () => {
           : [{ uri: item.post_uri }]
       return new Response(JSON.stringify({ posts }), { status: 200 })
     })
-    await expect(loadPublicFeed(new AbortController().signal, null, fetcher, null))
-      .rejects.toMatchObject({ kind: "unavailable", message: "Current public post visibility could not be verified" })
+    await expect(loadPublicFeed(new AbortController().signal, null, fetcher, null)).rejects.toBeInstanceOf(Error)
   })
 
   it("withholds cached metadata when the current author DID differs from the requested URI", async () => {
@@ -384,10 +472,10 @@ describe("public feed contract", () => {
         : post] }), { status: 200 })
     })
     const initial = await loadPublicFeed(new AbortController().signal, null, fetcher, null)
-    expect(initial.data.rows[0].post.visibility).toBe("public")
+    expect(initial.data.rows[0].post?.visibility).toBe("public")
     refresh = true
     await expect(loadPublicFeed(new AbortController().signal, initial.data, fetcher, initial.data))
-      .rejects.toMatchObject({ kind: "unavailable", message: "Current public post visibility could not be verified" })
+      .rejects.toMatchObject({ kind: "unavailable" })
   })
 
   it("selects the strongest weighted contribution and retains URI selection", () => {

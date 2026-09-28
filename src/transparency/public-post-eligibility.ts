@@ -10,6 +10,46 @@ const APPVIEW_TIMEOUT_MS = 1500;
 const APPVIEW_MAX_RESPONSE_BYTES = 1024 * 1024;
 const LOCAL_QUERY_TIMEOUT_MS = 1000;
 const POST_URI_PATTERN = /^at:\/\/did:[a-z0-9]+:[A-Za-z0-9._:-]+\/app\.bsky\.feed\.post\/[A-Za-z0-9._~:@!$&'()*+,;=-]+$/;
+const POLICY_WITHHOLD_REASONS = new Set([
+  'Post hidden by Bluesky public-view policy',
+  'Post contains an unavailable embedded record',
+]);
+
+function assertWellFormedPublicPost(value: unknown, uri: string): void {
+  const envelope = z.object({
+    uri: z.string(),
+    cid: z.string().trim().min(1),
+    author: z.object({ did: z.string().min(1), handle: z.string().min(1) }).passthrough(),
+    record: z.object({ text: z.string().min(1) }).passthrough(),
+  }).passthrough().safeParse(value);
+  const authority = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\//.exec(uri)?.[1];
+  if (!envelope.success || envelope.data.uri !== uri || authority !== envelope.data.author.did) {
+    throw new PublicPostEligibilityError('AppView returned a malformed post for a requested URI', {});
+  }
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    visited += 1;
+    if (visited > 512) throw new PublicPostEligibilityError('AppView visibility metadata exceeds validation bounds', {});
+    if (Array.isArray(current)) {
+      pending.push(...current);
+    } else if (typeof current === 'object' && current !== null) {
+      const node = current as Record<string, unknown>;
+      if ('labels' in node) {
+        const labels = Array.isArray(node.labels)
+          ? node.labels
+          : typeof node.labels === 'object' && node.labels !== null && !Array.isArray(node.labels) && Array.isArray((node.labels as { values?: unknown }).values)
+            ? (node.labels as { values: unknown[] }).values
+            : null;
+        if (labels === null || labels.some((label) => typeof label !== 'object' || label === null || typeof (label as { val?: unknown }).val !== 'string')) {
+          throw new PublicPostEligibilityError('AppView visibility labels are malformed', {});
+        }
+      }
+      pending.push(...Object.values(node).filter((nested) => typeof nested === 'object' && nested !== null));
+    }
+  }
+}
 
 export function isValidPublicPostUri(postUri: string): boolean {
   return POST_URI_PATTERN.test(postUri);
@@ -24,6 +64,13 @@ export class PublicPostEligibilityError extends Error {
   constructor(message: string, options: ErrorOptions) {
     super(message, options);
     this.name = 'PublicPostEligibilityError';
+  }
+}
+
+export class PublicPostEligibilityDeniedError extends PublicPostEligibilityError {
+  constructor() {
+    super('Current public post eligibility was denied', {});
+    this.name = 'PublicPostEligibilityDeniedError';
   }
 }
 
@@ -102,17 +149,23 @@ async function readAppViewBatch(
   const expected = new Set(postUris);
   const seen = new Map<string, string>();
   for (const value of parsed.data.posts) {
-    const post = z.object({ uri: z.string(), cid: z.string().trim().min(1) }).passthrough().safeParse(value);
-    if (!post.success || !expected.has(post.data.uri) || seen.has(post.data.uri) ||
-        publicPostVisibilityReason(value) !== null) {
+    const identity = z.object({ uri: z.string().min(1) }).passthrough().safeParse(value);
+    if (!identity.success || !expected.has(identity.data.uri) || seen.has(identity.data.uri)) {
       throw new PublicPostEligibilityError('AppView did not establish public visibility for the complete requested batch', {});
     }
-    seen.set(post.data.uri, post.data.cid);
+    seen.set(identity.data.uri, '');
+    assertWellFormedPublicPost(value, identity.data.uri);
+    const post = value as { uri: string; cid: string };
+    const reason = publicPostVisibilityReason(value);
+    if (reason !== null) {
+      if (!POLICY_WITHHOLD_REASONS.has(reason)) {
+        throw new PublicPostEligibilityError('AppView visibility could not be safely classified', {});
+      }
+      continue;
+    }
+    seen.set(post.uri, post.cid);
   }
-  if (seen.size !== expected.size) {
-    throw new PublicPostEligibilityError('AppView omitted a requested post from public view', {});
-  }
-  return seen;
+  return new Map([...seen].filter(([, cid]) => cid.length > 0));
 }
 
 async function assertAppViewBatchPublic(postUris: readonly string[]): Promise<Map<string, string>> {
@@ -139,10 +192,10 @@ async function assertAppViewBatchPublic(postUris: readonly string[]): Promise<Ma
   }
 }
 
-/** Revalidate public disclosure; never reconstruct or change published ranking math. */
-export async function assertPublicPostEligibility(
+/** Return only per-post public eligibility; infrastructure uncertainty rejects the whole check. */
+export async function readPublicPostEligibility(
   targets: readonly PublicPostEligibilityTarget[]
-): Promise<void> {
+): Promise<ReadonlyMap<string, boolean>> {
   if (targets.length === 0 || targets.length > MAX_POSTS ||
       targets.some((target) => !isValidPublicPostUri(target.postUri)) ||
       new Set(targets.map((target) => target.postUri)).size !== targets.length) {
@@ -160,7 +213,11 @@ export async function assertPublicPostEligibility(
     if (result.status === 'rejected') throw result.reason;
     for (const [uri, cid] of result.value) observedCids.set(uri, cid);
   }
-  const currentCids = postUris.map((uri) => {
+  const localTargets = targets.filter((target) => observedCids.has(target.postUri));
+  const decisions = new Map(targets.map((target) => [target.postUri, false]));
+  if (localTargets.length === 0) return decisions;
+  const localPostUris = localTargets.map((target) => target.postUri);
+  const currentCids = localPostUris.map((uri) => {
     const cid = observedCids.get(uri);
     if (cid === undefined) throw new PublicPostEligibilityError('AppView omitted a requested CID', {});
     return cid;
@@ -193,20 +250,33 @@ export async function assertPublicPostEligibility(
         SELECT uri, eligible AS has_live_post,
           (has_local_state AND NOT eligible) AS denied
         FROM current_state`,
-      values: [postUris, currentCids],
+      values: [localPostUris, currentCids],
       query_timeout: LOCAL_QUERY_TIMEOUT_MS,
     };
-    const result = await db.query(query);
-    const rows = z.array(LocalEligibilitySchema).max(MAX_POSTS).parse(result.rows);
+    const queryResult = await db.query(query);
+    const rows = z.array(LocalEligibilitySchema).max(MAX_POSTS).parse(queryResult.rows);
     const byUri = new Map(rows.map((row) => [row.uri, row]));
-    if (rows.length !== targets.length || byUri.size !== targets.length || targets.some((target) => {
-      const state = byUri.get(target.postUri);
-      return state === undefined || state.denied || (target.requiresLocalPost && !state.has_live_post);
-    })) {
+    if (rows.length !== localTargets.length || byUri.size !== localTargets.length || localTargets.some((target) => !byUri.has(target.postUri))) {
       throw new PublicPostEligibilityError('Current local post eligibility could not be established', {});
     }
+    for (const target of localTargets) {
+      const state = byUri.get(target.postUri);
+      if (state === undefined) throw new PublicPostEligibilityError('Current local post eligibility could not be established', {});
+      decisions.set(target.postUri, !state.denied && (!target.requiresLocalPost || state.has_live_post));
+    }
+    return decisions;
   } catch (error) {
     if (error instanceof PublicPostEligibilityError) throw error;
     throw new PublicPostEligibilityError('Current local post eligibility lookup failed', { cause: error });
+  }
+}
+
+/** Strict receipt callers must have confirmed eligibility for the requested post. */
+export async function assertPublicPostEligibility(
+  targets: readonly PublicPostEligibilityTarget[]
+): Promise<void> {
+  const decisions = await readPublicPostEligibility(targets);
+  if (targets.some((target) => decisions.get(target.postUri) !== true)) {
+    throw new PublicPostEligibilityDeniedError();
   }
 }

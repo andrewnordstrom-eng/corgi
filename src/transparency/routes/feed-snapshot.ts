@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { ErrorResponseSchema, RateLimitResponseSchema } from '../../lib/openapi.js';
@@ -7,8 +8,8 @@ import {
   isPublishedSnapshotIntegrityFailure,
   readTransparencyFeedSnapshot,
 } from '../feed-snapshot-store.js';
-import { assertPublicPostEligibility } from '../public-post-eligibility.js';
-import type { TransparencyFeedSnapshot } from '../transparency.types.js';
+import { readPublicPostEligibility } from '../public-post-eligibility.js';
+import type { PublicTransparencyFeedSnapshot, TransparencyFeedSnapshot } from '../transparency.types.js';
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -17,6 +18,12 @@ const DEFAULT_LIMIT = 50;
 const SNAPSHOT_CACHE_CONTROL = 'no-store';
 const ELIGIBILITY_SUCCESS_TTL_MS = 5_000;
 const MAX_ELIGIBILITY_SUCCESSES = 128;
+const WITHHELD_REASON = 'Post withheld from the public view' as const;
+
+interface EligibilitySuccess {
+  readonly expiresAt: number;
+  readonly eligibleByUri: ReadonlyMap<string, boolean>;
+}
 
 function etagMatches(ifNoneMatch: string | string[] | undefined, etag: string): boolean {
   const rawValues = Array.isArray(ifNoneMatch) ? ifNoneMatch : [ifNoneMatch];
@@ -27,10 +34,10 @@ function etagMatches(ifNoneMatch: string | string[] | undefined, etag: string): 
 }
 
 export function registerFeedSnapshotRoute(app: FastifyInstance): void {
-  const pendingEligibility = new Map<string, Promise<void>>();
-  const eligibilitySuccesses = new Map<string, number>();
+  const pendingEligibility = new Map<string, Promise<ReadonlyMap<string, boolean>>>();
+  const eligibilitySuccesses = new Map<string, EligibilitySuccess>();
 
-  async function assertSnapshotPublic(snapshot: TransparencyFeedSnapshot, limit: number): Promise<void> {
+  async function readSnapshotPublicEligibility(snapshot: TransparencyFeedSnapshot, limit: number): Promise<ReadonlyMap<string, boolean>> {
     const targets = snapshot.items.map((item) => ({
       postUri: item.post_uri,
       requiresLocalPost: item.ranked_position !== null,
@@ -39,27 +46,30 @@ export function registerFeedSnapshotRoute(app: FastifyInstance): void {
     // borrow approval from a smaller or otherwise different presentation.
     const key = JSON.stringify([snapshot.presentation_snapshot_id, limit, targets]);
     const startedAt = performance.now();
-    const expiresAt = eligibilitySuccesses.get(key);
-    if (expiresAt !== undefined && startedAt < expiresAt) return;
-    for (const [cachedKey, deadline] of eligibilitySuccesses) {
-      if (startedAt >= deadline) eligibilitySuccesses.delete(cachedKey);
+    const cached = eligibilitySuccesses.get(key);
+    if (cached !== undefined && startedAt < cached.expiresAt) return cached.eligibleByUri;
+    for (const [cachedKey, value] of eligibilitySuccesses) {
+      if (startedAt >= value.expiresAt) eligibilitySuccesses.delete(cachedKey);
     }
     const pending = pendingEligibility.get(key);
     if (pending !== undefined) return pending;
-    const check = assertPublicPostEligibility(targets);
+    const check = readPublicPostEligibility(targets);
     pendingEligibility.set(key, check);
     try {
-      await check;
-      // Owner-approved demo release policy: at most five additional seconds of
-      // visibility lag. Start the clock before checking, never after completion.
-      const deadline = startedAt + ELIGIBILITY_SUCCESS_TTL_MS;
-      if (performance.now() < deadline) {
-        if (eligibilitySuccesses.size >= MAX_ELIGIBILITY_SUCCESSES) {
-          const oldestKey = eligibilitySuccesses.keys().next().value;
-          if (oldestKey !== undefined) eligibilitySuccesses.delete(oldestKey);
+      const eligibleByUri = await check;
+      // Only fully eligible snapshots reuse the owner-approved five-second window.
+      // A mixed or withheld mask is always refreshed; denied results never enter cache.
+      if (targets.every((target) => eligibleByUri.get(target.postUri) === true)) {
+        const expiresAt = startedAt + ELIGIBILITY_SUCCESS_TTL_MS;
+        if (performance.now() < expiresAt) {
+          if (eligibilitySuccesses.size >= MAX_ELIGIBILITY_SUCCESSES) {
+            const oldestKey = eligibilitySuccesses.keys().next().value;
+            if (oldestKey !== undefined) eligibilitySuccesses.delete(oldestKey);
+          }
+          eligibilitySuccesses.set(key, { expiresAt, eligibleByUri: new Map(eligibleByUri) });
         }
-        eligibilitySuccesses.set(key, deadline);
       }
+      return eligibleByUri;
     } finally {
       if (pendingEligibility.get(key) === check) pendingEligibility.delete(key);
     }
@@ -81,7 +91,7 @@ export function registerFeedSnapshotRoute(app: FastifyInstance): void {
       schema: {
         tags: ['Transparency'],
         summary: 'Read the current published feed snapshot and ranking explanations',
-        description: 'Returns one publication-bound, anonymous snapshot of the live Corgi feed. Published order and math are immutable; Public visibility is checked in bounded AppView batches and one local lifecycle query. Successful checks may be reused for the identical publication and disclosure set for at most five seconds; failures are never cached. This policy applies before both 200 and 304 responses. It never reconstructs per-post score receipts from PostgreSQL.',
+        description: 'Returns one publication-bound, anonymous snapshot of the live Corgi feed. Published order and math are immutable; public visibility is checked in bounded AppView batches and one local lifecycle query. Ineligible posts become generic withheld slots at their original positions. Fully eligible checks may be reused for the identical publication and disclosure set for at most five seconds; withheld or failed results are never cached. This policy applies before both 200 and 304 responses. It never reconstructs per-post score receipts from PostgreSQL.',
         querystring: {
           type: 'object',
           additionalProperties: false,
@@ -118,6 +128,7 @@ export function registerFeedSnapshotRoute(app: FastifyInstance): void {
                     scoredItemResponseSchema('ranked'),
                     scoredItemResponseSchema('pinned_announcement'),
                     scorelessPinnedItemResponseSchema(),
+                    withheldItemResponseSchema(),
                   ],
                 },
               },
@@ -160,14 +171,24 @@ export function registerFeedSnapshotRoute(app: FastifyInstance): void {
           });
         }
 
-        await assertSnapshotPublic(snapshot, effectiveLimit);
-
-        const etag = `"${snapshot.presentation_snapshot_id}-${effectiveLimit}"`;
+        const eligibleByUri = await readSnapshotPublicEligibility(snapshot, effectiveLimit);
+        const publicSnapshot: PublicTransparencyFeedSnapshot = {
+          ...snapshot,
+          items: snapshot.items.map((item) => {
+            if (eligibleByUri.get(item.post_uri) === true) return item;
+            if (eligibleByUri.has(item.post_uri)) {
+              return { position: item.position, placement: 'withheld', reason: WITHHELD_REASON };
+            }
+            throw new Error('Public eligibility did not return a decision for every published slot');
+          }),
+        };
+        const representationHash = createHash('sha256').update(JSON.stringify(publicSnapshot)).digest('hex');
+        const etag = `"${representationHash}"`;
         reply.header('ETag', etag);
         if (etagMatches(request.headers['if-none-match'], etag)) {
           return reply.code(304).send();
         }
-        return reply.send(snapshot);
+        return reply.send(publicSnapshot);
       } catch (error) {
         const isIntegrityFailure = isPublishedSnapshotIntegrityFailure(error);
         logger.error(
@@ -187,6 +208,19 @@ export function registerFeedSnapshotRoute(app: FastifyInstance): void {
       }
     }
   );
+}
+
+function withheldItemResponseSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      position: { type: 'integer' },
+      placement: { type: 'string', enum: ['withheld'] },
+      reason: { type: 'string', enum: [WITHHELD_REASON] },
+    },
+    required: ['position', 'placement', 'reason'],
+  };
 }
 
 function componentResponseSchema(): Record<string, unknown> {

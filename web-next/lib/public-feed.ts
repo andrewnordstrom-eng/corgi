@@ -67,6 +67,12 @@ const scoredPinnedItemSchema = rankedItemSchema.extend({
   placement: z.literal("pinned_announcement"),
 }).strict()
 
+const withheldItemSchema = z.object({
+  position: z.number().int().positive(),
+  placement: z.literal("withheld"),
+  reason: z.literal("Post withheld from the public view"),
+}).strict()
+
 export const publicFeedSnapshotSchema = z.object({
   schema_version: z.literal(1),
   feed_uri: z.string().min(1),
@@ -84,19 +90,26 @@ export const publicFeedSnapshotSchema = z.object({
     source_diversity: z.number().finite(),
     relevance: z.number().finite(),
   }).strict(),
-  items: z.array(z.union([rankedItemSchema, pinnedItemSchema, scoredPinnedItemSchema])).max(PUBLIC_FEED_LIMIT),
+  items: z.array(z.union([rankedItemSchema, pinnedItemSchema, scoredPinnedItemSchema, withheldItemSchema])).max(PUBLIC_FEED_LIMIT),
 }).strict()
 
 export type PublicFeedSnapshot = z.infer<typeof publicFeedSnapshotSchema>
 export type PublicFeedItem = PublicFeedSnapshot["items"][number]
-export type PublicFeedRankedItem = Extract<PublicFeedItem, { readonly placement: "ranked" }>
+export type PublicFeedWithheldItem = z.infer<typeof withheldItemSchema>
+export type PublicFeedVisibleItem = Exclude<PublicFeedItem, PublicFeedWithheldItem>
+export type PublicFeedRankedItem = Extract<PublicFeedVisibleItem, { readonly placement: "ranked" }>
 export type PublicFeedScoredItem = Extract<PublicFeedItem, { readonly final_score: number }>
 export type PublicFeedScoreComponent = z.infer<typeof scoreComponentSchema>
 
 const appViewLabelSchema = z.object({ val: z.string().min(1) }).passthrough()
+const POLICY_WITHHOLD_REASONS = new Set([
+  "Post hidden by Bluesky public-view policy",
+  "Post contains an unavailable embedded record",
+])
 const appViewPostSchema = z.object({
   uri: z.string().min(1),
   author: z.object({
+    did: z.string().min(1),
     handle: z.string().min(1),
     displayName: z.string().optional(),
     avatar: z.string().url().optional(),
@@ -112,6 +125,32 @@ const appViewPostSchema = z.object({
   repostCount: z.number().int().nonnegative().optional(),
   replyCount: z.number().int().nonnegative().optional(),
 }).passthrough()
+
+function validateAppViewVisibilityShape(value: unknown): void {
+  const pending: unknown[] = [value]
+  let visited = 0
+  while (pending.length > 0) {
+    const current = pending.pop()
+    visited += 1
+    if (visited > 512) throw new PublicFeedDataError("unavailable", "Current public post visibility could not be verified")
+    if (Array.isArray(current)) {
+      pending.push(...current)
+    } else if (typeof current === "object" && current !== null) {
+      const node = current as Record<string, unknown>
+      if ("labels" in node) {
+        const labels = Array.isArray(node.labels)
+          ? node.labels
+          : typeof node.labels === "object" && node.labels !== null && !Array.isArray(node.labels) && Array.isArray((node.labels as { values?: unknown }).values)
+            ? (node.labels as { values: unknown[] }).values
+            : null
+        if (labels === null || labels.some((label) => typeof label !== "object" || label === null || typeof (label as { val?: unknown }).val !== "string")) {
+          throw new PublicFeedDataError("contract", "Bluesky AppView hydration returned malformed visibility labels")
+        }
+      }
+      pending.push(...Object.values(node).filter((nested) => typeof nested === "object" && nested !== null))
+    }
+  }
+}
 
 const appViewResponseSchema = z.object({
   posts: z.array(z.unknown()),
@@ -140,9 +179,12 @@ export interface UnavailableHydratedPost {
 
 export type HydratedPost = PublicHydratedPost | UnavailableHydratedPost
 
-export interface PublicFeedRow {
-  readonly item: PublicFeedItem
-  readonly post: PublicHydratedPost
+export type PublicFeedRow =
+  | { readonly item: PublicFeedWithheldItem; readonly post: null }
+  | { readonly item: PublicFeedVisibleItem; readonly post: PublicHydratedPost }
+
+export function isPublicFeedRow(row: PublicFeedRow): row is Extract<PublicFeedRow, { readonly post: PublicHydratedPost }> {
+  return row.item.placement !== "withheld"
 }
 
 export interface LoadedPublicFeed {
@@ -187,13 +229,24 @@ function unavailablePost(uri: string, reason: string): UnavailableHydratedPost {
 
 function normalizeAppViewPost(value: unknown, requestedUris: ReadonlySet<string>): HydratedPost | null {
   const parsed = appViewPostSchema.safeParse(value)
-  if (!parsed.success || !requestedUris.has(parsed.data.uri)) {
-    return null
+  if (!parsed.success) {
+    throw new PublicFeedDataError("contract", "Bluesky AppView hydration returned a malformed post")
+  }
+  if (!requestedUris.has(parsed.data.uri)) {
+    throw new PublicFeedDataError("contract", "Bluesky AppView hydration returned an unrequested URI")
   }
 
   const post = parsed.data
+  const authority = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\//.exec(post.uri)?.[1]
+  if (authority !== post.author.did) {
+    throw new PublicFeedDataError("unavailable", "Current public post visibility could not be verified")
+  }
+  validateAppViewVisibilityShape(value)
   const hiddenReason = publicPostVisibilityReason(value)
   if (hiddenReason !== null) {
+    if (!POLICY_WITHHOLD_REASONS.has(hiddenReason)) {
+      throw new PublicFeedDataError("unavailable", "Current public post visibility could not be verified")
+    }
     return unavailablePost(post.uri, hiddenReason)
   }
 
@@ -338,7 +391,7 @@ export async function loadPublicFeed(
   displayed: LoadedPublicFeed | null,
 ): Promise<PublicFeedLoadResult> {
   const headers = new Headers({ Accept: "application/json" })
-  if (cached !== null) {
+  if (cached !== null && cached.etag.length > 0) {
     headers.set("If-None-Match", cached.etag)
   }
 
@@ -373,10 +426,25 @@ export async function loadPublicFeed(
   }
 
   const snapshot = parsed.data
+  if (displayed !== null && displayed.snapshot.presentation_snapshot_id !== snapshot.presentation_snapshot_id) {
+    const rows: readonly PublicFeedRow[] = displayed.rows.map((row) => ({
+      item: { position: row.item.position, placement: "withheld", reason: "Post withheld from the public view" },
+      post: null,
+    }))
+    const safeData: LoadedPublicFeed = {
+      ...displayed,
+      snapshot: { ...displayed.snapshot, items: rows.map((row) => row.item) },
+      rows,
+      etag: "",
+      hydrationErrors: [],
+      requestCount: 0,
+    }
+    return { kind: "pending", pendingSnapshotId: snapshot.presentation_snapshot_id, data: safeData, displayedData: null }
+  }
   // Visibility belongs to the displayed posts, independently of ranking ETags.
   // Pending-only posts hydrate when accepted, keeping each refresh at two batches.
-  const hydrationSnapshot = displayed?.snapshot ?? snapshot
-  const postUris = hydrationSnapshot.items.map((item) => item.post_uri)
+  const hydrationSnapshot = snapshot
+  const postUris = hydrationSnapshot.items.flatMap((item) => item.placement === "withheld" ? [] : [item.post_uri])
   const batches = splitPostUris(postUris)
   const requestCount = 1 + batches.length
   if (requestCount > PUBLIC_FEED_MAX_REQUESTS_PER_REFRESH) {
@@ -385,7 +453,7 @@ export async function loadPublicFeed(
       `Public feed refresh would use ${requestCount} requests; limit is ${PUBLIC_FEED_MAX_REQUESTS_PER_REFRESH}`,
     )
   }
-  const hydrationResults = await Promise.allSettled(
+  const hydrationResults = await Promise.all(
     batches.map((batch) => hydrateBatch(batch, signal, fetcher)),
   )
   if (signal.aborted) {
@@ -393,51 +461,43 @@ export async function loadPublicFeed(
   }
 
   const hydratedByUri = new Map<string, HydratedPost>()
+  for (const result of hydrationResults) {
+    for (const [uri, post] of result) hydratedByUri.set(uri, post)
+  }
   const hydrationErrors: string[] = []
-  hydrationResults.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      for (const [uri, post] of result.value) {
-        hydratedByUri.set(uri, post)
-      }
-      return
-    }
-
-    const message = errorMessage(result.reason)
-    hydrationErrors.push(message)
-    for (const uri of batches[index] ?? []) {
-      hydratedByUri.set(uri, unavailablePost(uri, "Post details could not be loaded from Bluesky"))
-    }
-  })
 
   const rowsForSnapshot = (source: PublicFeedSnapshot): readonly PublicFeedRow[] => source.items.map((item) => {
+    if (item.placement === "withheld") {
+      return { item, post: null }
+    }
     const post = hydratedByUri.get(item.post_uri)
     if (post === undefined || post.visibility !== "public") {
-      throw new PublicFeedDataError("unavailable", "Current public post visibility could not be verified")
+      const withheld: PublicFeedWithheldItem = { position: item.position, placement: "withheld", reason: "Post withheld from the public view" }
+      return { item: withheld, post: null }
     }
     return { item, post }
   })
   const hydratedRows = rowsForSnapshot(hydrationSnapshot)
   const displayedData = displayed === null ? null : {
     ...displayed,
+    snapshot: { ...hydrationSnapshot, items: hydratedRows.map((row) => row.item) },
     rows: hydratedRows,
     hydrationErrors,
     requestCount,
   }
-  if (displayedData !== null
-    && displayedData.snapshot.presentation_snapshot_id !== snapshot.presentation_snapshot_id) {
-    // The candidate has not been hydrated. Retain only its non-content identity;
-    // accepting it fetches the current snapshot and verifies every row afresh.
-    return { kind: "pending", pendingSnapshotId: snapshot.presentation_snapshot_id,
-      data: displayedData, displayedData }
-  }
+  const locallyWithheld = hydrationSnapshot.items.some((item, index) => (
+    item.placement !== "withheld" && hydratedRows[index]?.item.placement === "withheld"
+  ))
 
   return {
     kind: response.status === 304 ? "not_modified" : "loaded",
     pendingSnapshotId: null,
     data: {
-      snapshot,
+      snapshot: { ...snapshot, items: hydratedRows.map((row) => row.item) },
       rows: hydratedRows,
-      etag: response.status === 304 && cached !== null
+      etag: locallyWithheld
+        ? ""
+        : response.status === 304 && cached !== null
         ? cached.etag
         : response.headers.get("ETag") ?? `"${snapshot.presentation_snapshot_id}-${PUBLIC_FEED_LIMIT}"`,
       hydrationErrors,
@@ -466,10 +526,10 @@ export function retainSelectedUri(
   selectedUri: string | null,
   rows: readonly PublicFeedRow[],
 ): string | null {
-  if (selectedUri !== null && rows.some((row) => row.item.post_uri === selectedUri)) {
+  if (selectedUri !== null && rows.some((row) => isPublicFeedRow(row) && row.item.post_uri === selectedUri)) {
     return selectedUri
   }
-  return rows[0]?.item.post_uri ?? null
+  return rows.find(isPublicFeedRow)?.item.post_uri ?? null
 }
 
 export function isSnapshotStale(snapshot: PublicFeedSnapshot, nowMs: number): boolean {

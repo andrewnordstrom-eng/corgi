@@ -3130,7 +3130,7 @@
         "tags": [
           "Transparency"
         ],
-        "description": "Returns one publication-bound, anonymous snapshot of the live Corgi feed. Published order and math are immutable; current public visibility is revalidated in bounded AppView batches and one local lifecycle query before a 200 or 304 response. It never reconstructs per-post score receipts from PostgreSQL.",
+        "description": "Returns one publication-bound, anonymous snapshot of the live Corgi feed. Published order and math are immutable; public visibility is checked in bounded AppView batches and one local lifecycle query. Ineligible posts become generic withheld slots at their original positions. Fully eligible checks may be reused for the identical publication and disclosure set for at most five seconds; withheld or failed results are never cached. This policy applies before both 200 and 304 responses. It never reconstructs per-post score receipts from PostgreSQL.",
         "parameters": [
           {
             "schema": {
@@ -3678,6 +3678,32 @@
                               "classification_method",
                               "engagement_only_position"
                             ]
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "position": {
+                                "type": "integer"
+                              },
+                              "placement": {
+                                "type": "string",
+                                "enum": [
+                                  "withheld"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "Post withheld from the public view"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "position",
+                              "placement",
+                              "reason"
+                            ]
                           }
                         ]
                       }
@@ -3701,7 +3727,7 @@
             }
           },
           "304": {
-            "description": "The presentation snapshot has not changed and current public eligibility was revalidated."
+            "description": "The presentation snapshot has not changed and public eligibility satisfies the bounded five-second success policy."
           },
           "400": {
             "description": "Default Response",

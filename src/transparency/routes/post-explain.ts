@@ -12,7 +12,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../../db/client.js';
 import { config } from '../../config.js';
-import { assertPublicPostEligibility, isValidPublicPostUri, PublicPostEligibilityError } from '../public-post-eligibility.js';
+import { assertPublicPostEligibility, isValidPublicPostUri, PublicPostEligibilityDeniedError, PublicPostEligibilityError } from '../public-post-eligibility.js';
 import { logger } from '../../lib/logger.js';
 import { ErrorResponseSchema } from '../../lib/openapi.js';
 import {
@@ -343,6 +343,12 @@ export function registerPostExplainRoute(app: FastifyInstance): void {
         return reply.send(explanation);
       } catch (err) {
         if (err instanceof PublicPostEligibilityError) {
+          if (err instanceof PublicPostEligibilityDeniedError) {
+            return reply.code(404).send({
+              error: 'PostNotPubliclyViewable',
+              message: 'This post is not publicly viewable.',
+            });
+          }
           return reply.code(503).send({
             error: 'TransparencySnapshotUnavailable',
             message: 'Current public post eligibility could not be established.',

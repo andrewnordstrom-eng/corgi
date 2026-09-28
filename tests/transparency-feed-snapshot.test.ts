@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { publicEligibilityMock } = vi.hoisted(() => ({ publicEligibilityMock: vi.fn() }));
 vi.mock('../src/transparency/public-post-eligibility.js', () => ({
-  assertPublicPostEligibility: publicEligibilityMock,
+  readPublicPostEligibility: publicEligibilityMock,
   PublicPostEligibilityError: class extends Error {},
 }));
 
@@ -67,6 +67,10 @@ function explanation(postUri: string, rankedPosition: number, score: number): Re
   };
 }
 
+function allEligible(targets: readonly { postUri: string }[]): ReadonlyMap<string, boolean> {
+  return new Map(targets.map((target) => [target.postUri, true]));
+}
+
 function snapshotEnvelope(status: 'current' | 'last_known_good'): Record<string, unknown> {
   const first = explanation('at://did:plc:test/app.bsky.feed.post/1', 1, 0.5);
   const second = explanation('at://did:plc:test/app.bsky.feed.post/2', 2, 0.4);
@@ -84,6 +88,19 @@ function snapshotEnvelope(status: 'current' | 'last_known_good'): Record<string,
       { postUri: second.post_uri, redisScore: '0.4', explanation: JSON.stringify(second) },
     ],
   };
+}
+
+function multiItemSnapshotEnvelope(count: number): Record<string, unknown> {
+  const envelope = snapshotEnvelope('current');
+  envelope.totalPublishedItems = String(count);
+  envelope.ranked = Array.from({ length: count }, (_value, index) => {
+    const position = index + 1;
+    const uri = `at://did:plc:test/app.bsky.feed.post/${position}`;
+    const score = (count - index) / (count + 1);
+    const item = explanation(uri, position, score);
+    return { postUri: uri, redisScore: String(score), explanation: JSON.stringify(item) };
+  });
+  return envelope;
 }
 
 function snapshotResult(
@@ -144,7 +161,7 @@ function publishedPostCandidate(
 
 describe('public transparency feed snapshot', () => {
   beforeEach(() => {
-    publicEligibilityMock.mockReset().mockResolvedValue(undefined);
+    publicEligibilityMock.mockReset().mockImplementation((targets: readonly { postUri: string }[]) => Promise.resolve(allEligible(targets)));
     configMock.FEED_PRIVATE_MODE = false;
     redisEvalMock.mockReset();
   });
@@ -160,7 +177,7 @@ describe('public transparency feed snapshot', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.headers.etag).toMatch(/^"[0-9a-f]{64}-2"$/);
+    expect(response.headers.etag).toMatch(/^"[0-9a-f]{64}"$/);
     const body = response.json();
     expect(body.items).toHaveLength(2);
     expect(body.items[0]).toMatchObject({
@@ -349,10 +366,64 @@ describe('public transparency feed snapshot', () => {
       url: '/api/transparency/feed-snapshot?limit=2',
     });
 
-    expect(oneItem.headers.etag).toMatch(/-1"$/);
-    expect(twoItems.headers.etag).toMatch(/-2"$/);
+    expect(oneItem.headers.etag).toMatch(/^"[0-9a-f]{64}"$/);
+    expect(twoItems.headers.etag).toMatch(/^"[0-9a-f]{64}"$/);
     expect(oneItem.headers.etag).not.toBe(twoItems.headers.etag);
     await app.close();
+  });
+
+  it('withholds only ineligible rows across all50 published positions without leaking their receipts', async () => {
+    redisEvalMock.mockResolvedValue(snapshotResult([multiItemSnapshotEnvelope(50)], null));
+    const withheldUris = new Set([1, 25, 50].map((position) => `at://did:plc:test/app.bsky.feed.post/${position}`));
+    publicEligibilityMock.mockImplementationOnce((targets: readonly { postUri: string }[]) => Promise.resolve(
+      new Map(targets.map((target) => [target.postUri, !withheldUris.has(target.postUri)])),
+    ));
+    const app = Fastify();
+    registerFeedSnapshotRoute(app);
+
+    const response = await app.inject({ method: 'GET', url: '/api/transparency/feed-snapshot?limit=50' });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.items).toHaveLength(50);
+    expect(body.items.map((item: { position: number }) => item.position)).toEqual(Array.from({ length: 50 }, (_value, index) => index + 1));
+    for (const position of [1, 25, 50]) {
+      expect(body.items[position - 1]).toEqual({ position, placement: 'withheld', reason: 'Post withheld from the public view' });
+      expect(body.items.filter((item: { placement: string }) => item.placement !== 'withheld').map((item: { post_uri: string }) => item.post_uri)).not.toContain(`at://did:plc:test/app.bsky.feed.post/${position}`);
+    }
+    expect(body.items[1]).toMatchObject({ position: 2, post_uri: 'at://did:plc:test/app.bsky.feed.post/2', final_score: 49 / 51 });
+    expect(response.body).not.toContain('hiddenReason');
+    expect(response.body).not.toContain('eligibility');
+    await app.close();
+  });
+
+  it('changes the ETag when a previously visible slot becomes withheld after the positive cache expires', async () => {
+    redisEvalMock.mockResolvedValue(currentEnvelope(null));
+    const uri = 'at://did:plc:test/app.bsky.feed.post/1';
+    publicEligibilityMock
+      .mockImplementationOnce((targets: readonly { postUri: string }[]) => Promise.resolve(allEligible(targets)))
+      .mockImplementation((targets: readonly { postUri: string }[]) => Promise.resolve(new Map(targets.map((target) => [target.postUri, target.postUri !== uri]))));
+    const monotonicNow = vi.spyOn(performance, 'now').mockReturnValue(100);
+    const app = Fastify();
+    registerFeedSnapshotRoute(app);
+    try {
+      const visible = await app.inject({ method: 'GET', url: '/api/transparency/feed-snapshot?limit=2' });
+      expect(visible.statusCode, visible.body).toBe(200);
+      expect(visible.json().items[0]).toMatchObject({ post_uri: uri, final_score: 0.5 });
+      monotonicNow.mockReturnValue(5_101);
+      const withheld = await app.inject({
+        method: 'GET',
+        url: '/api/transparency/feed-snapshot?limit=2',
+        headers: { 'if-none-match': String(visible.headers.etag) },
+      });
+      expect(withheld.statusCode).toBe(200);
+      expect(withheld.headers.etag).not.toBe(visible.headers.etag);
+      expect(withheld.json().items[0]).toEqual({ position: 1, placement: 'withheld', reason: 'Post withheld from the public view' });
+      expect(publicEligibilityMock).toHaveBeenCalledTimes(2);
+    } finally {
+      monotonicNow.mockRestore();
+      await app.close();
+    }
   });
 
   it.each(['51', '0', '-1', '1.5', 'abc', ''])(
@@ -751,7 +822,7 @@ describe('public snapshot current privacy revalidation', () => {
   beforeEach(() => {
     configMock.FEED_PRIVATE_MODE = false;
     redisEvalMock.mockReset().mockResolvedValue(currentEnvelope(null));
-    publicEligibilityMock.mockReset().mockResolvedValue(undefined);
+    publicEligibilityMock.mockReset().mockImplementation((targets: readonly { postUri: string }[]) => Promise.resolve(allEligible(targets)));
   });
   it('revalidates exact composed URI eligibility before200 or matching/list/weak/wildcard304', async () => {
     const monotonicNow = vi.spyOn(performance, 'now').mockReturnValue(100);
@@ -785,13 +856,13 @@ describe('public snapshot current privacy revalidation', () => {
     const eligibilityStarted = deferred<void>();
     const eligibilityGate = deferred<void>();
     let checks = 0;
-    publicEligibilityMock.mockImplementation(() => {
+    publicEligibilityMock.mockImplementation((targets: readonly { postUri: string }[]) => {
       checks += 1;
       if (checks === 1) {
         eligibilityStarted.resolve();
-        return eligibilityGate.promise;
+        return eligibilityGate.promise.then(() => allEligible(targets));
       }
-      return Promise.resolve();
+      return Promise.resolve(allEligible(targets));
     });
     const app = Fastify();
     const bothRequestsStarted = requestBarrier(app, 2);
@@ -826,8 +897,8 @@ describe('public snapshot current privacy revalidation', () => {
 
   it('does not alias pending checks across limits when the composed URI set is identical', async () => {
     const releases: Array<() => void> = [];
-    publicEligibilityMock.mockImplementation(() => new Promise<void>((resolve) => {
-      releases.push(() => resolve());
+    publicEligibilityMock.mockImplementation((targets: readonly { postUri: string }[]) => new Promise<ReadonlyMap<string, boolean>>((resolve) => {
+      releases.push(() => resolve(allEligible(targets)));
     }));
     const app = Fastify();
     const bothRequestsStarted = requestBarrier(app, 2);
@@ -882,10 +953,10 @@ describe('public snapshot current privacy revalidation', () => {
   it('clears rejected pending checks, caches only a later success, and bypasses it in private mode', async () => {
     const eligibilityStarted = deferred<void>();
     const eligibilityGate = deferred<void>();
-    publicEligibilityMock.mockImplementationOnce(() => {
+    publicEligibilityMock.mockImplementationOnce((targets: readonly { postUri: string }[]) => {
       eligibilityStarted.resolve();
-      return eligibilityGate.promise;
-    }).mockResolvedValue(undefined);
+      return eligibilityGate.promise.then(() => allEligible(targets));
+    }).mockImplementation((targets: readonly { postUri: string }[]) => Promise.resolve(allEligible(targets)));
     const app = Fastify();
     const bothRequestsStarted = requestBarrier(app, 2);
     registerFeedSnapshotRoute(app);
