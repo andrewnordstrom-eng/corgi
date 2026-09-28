@@ -21,15 +21,16 @@ import { HeroGlow, HERO_TOP, PageHero } from "@/components/ui/page-hero"
 import {
   PUBLIC_FEED_POLL_INTERVAL_MS,
   isSnapshotStale,
+  isPublicFeedRow,
   loadPublicFeed,
   retainSelectedUri,
   strongestContribution,
 } from "@/lib/public-feed"
 import type {
   LoadedPublicFeed,
-  PublicFeedItem,
   PublicFeedRow,
   PublicFeedSnapshot,
+  PublicFeedVisibleItem,
 } from "@/lib/public-feed"
 import { SIGNAL_COLORS, SIGNAL_KEYS, SIGNAL_LABELS, SIGNAL_SHORT_LABELS } from "@/lib/signals"
 
@@ -96,9 +97,12 @@ interface AdjacentRows {
   readonly below: PublicFeedRow | null
 }
 
-function adjacentScoreText(current: PublicFeedItem, neighbor: PublicFeedRow | null, label: "Above" | "Below"): string {
+function adjacentScoreText(current: PublicFeedVisibleItem, neighbor: PublicFeedRow | null, label: "Above" | "Below"): string {
   if (neighbor === null) {
     return `${label}: no adjacent row.`
+  }
+  if (neighbor.item.placement === "withheld") {
+    return `${label}: position ${neighbor.item.position} is withheld from the public view.`
   }
   if (neighbor.item.final_score === null) {
     return `${label}: position ${neighbor.item.position} is a scoreless pinned announcement.`
@@ -122,6 +126,7 @@ function SelectionInspector({
   readonly adjacent: AdjacentRows
   readonly compact: boolean
 }) {
+  if (row.item.placement === "withheld") return null
   const headingId = `feed-explanation-${compact ? "mobile" : "desktop"}-${row.item.position}`
   if (row.item.placement === "pinned_announcement" && row.item.final_score === null) {
     return (
@@ -221,7 +226,7 @@ function SelectionInspector({
   )
 }
 
-function ScoreRail({ item }: { readonly item: PublicFeedRow["item"] }) {
+function ScoreRail({ item }: { readonly item: PublicFeedVisibleItem }) {
   if (item.placement === "pinned_announcement" && item.final_score === null) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1.5 px-1.5 text-center">
@@ -257,6 +262,21 @@ function LiveFeedRow({
   readonly mobileExpanded: boolean
   readonly onExplain: (uri: string) => void
 }) {
+  if (!isPublicFeedRow(row)) {
+    return (
+      <div className={`${RANK_COL_CLASS} bg-white`} aria-label={`Position ${row.item.position} withheld`}>
+        <div className="flex min-h-24 items-center px-4 py-5">
+          <p className="text-sm font-semibold text-foreground/70">Withheld from the public view</p>
+        </div>
+        <div className="flex min-h-24 items-center justify-center border-l border-border/60 bg-biscuit/25 px-2 text-center">
+          <div>
+            <span className="block font-display text-xl font-bold tabular-nums text-foreground/70">{row.item.position}</span>
+            <span className="mt-1 block font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-foreground/55">Withheld</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
   const explanationId = `feed-explanation-mobile-${row.item.position}`
   return (
     <div className={selected ? "relative z-10 ring-2 ring-inset ring-primary/65" : ""}>
@@ -371,6 +391,7 @@ export function PublicLiveFeed() {
   const [failure, setFailure] = useState<FailureState | null>(null)
   const [announcement, setAnnouncement] = useState("Loading the public live feed.")
   const dataRef = useRef<LoadedPublicFeed | null>(null)
+  const pendingDataRef = useRef<string | null>(null)
   const selectedUriRef = useRef<string | null>(null)
   const activeRequestRef = useRef<ActiveFeedRequest | null>(null)
   const nextRequestIdRef = useRef(0)
@@ -390,14 +411,16 @@ export function PublicLiveFeed() {
     selectedUriRef.current = nextSelectedUri
     setSelectedUri(nextSelectedUri)
     setExpandedMobileUri((current) => (
-      current !== null && nextData.rows.some((row) => row.item.post_uri === current) ? current : null
+      current !== null && nextData.rows.some((row) => isPublicFeedRow(row) && row.item.post_uri === current) ? current : null
     ))
     setPendingData(null)
+    pendingDataRef.current = null
     setFailure(null)
     setAnnouncement(message)
   }, [])
 
   const requestFeed = useCallback(async (mode: LoadMode, policy: RequestPolicy) => {
+    if (mode === "notify" && pendingDataRef.current !== null) return
     const activeRequest = activeRequestRef.current
     if (activeRequest !== null) {
       if (policy === "dedupe") return
@@ -424,9 +447,13 @@ export function PublicLiveFeed() {
 
       const currentSnapshotId = dataRef.current?.snapshot.presentation_snapshot_id
       if (result.kind === "pending") {
-        dataRef.current = result.data
-        setData(result.data)
+        dataRef.current = null
+        selectedUriRef.current = null
+        setData(null)
+        setSelectedUri(null)
+        setExpandedMobileUri(null)
         setPendingData(result.pendingSnapshotId)
+        pendingDataRef.current = result.pendingSnapshotId
         setAnnouncement("A newer live feed snapshot is available. Choose Show latest to update the order.")
         return
       }
@@ -485,11 +512,13 @@ export function PublicLiveFeed() {
   }, [requestFeed])
 
   const selectedRow = useMemo(() => (
-    data?.rows.find((row) => row.item.post_uri === selectedUri) ?? data?.rows[0] ?? null
+    data?.rows.find((row) => isPublicFeedRow(row) && row.item.post_uri === selectedUri)
+      ?? data?.rows.find(isPublicFeedRow)
+      ?? null
   ), [data, selectedUri])
   const selectedAdjacent = useMemo<AdjacentRows>(() => {
-    if (data === null || selectedRow === null) return { above: null, below: null }
-    const index = data.rows.findIndex((row) => row.item.post_uri === selectedRow.item.post_uri)
+    if (data === null || selectedRow === null || !isPublicFeedRow(selectedRow)) return { above: null, below: null }
+    const index = data.rows.findIndex((row) => isPublicFeedRow(row) && row.item.post_uri === selectedRow.item.post_uri)
     return {
       above: index > 0 ? data.rows[index - 1] ?? null : null,
       below: index >= 0 ? data.rows[index + 1] ?? null : null,
@@ -596,17 +625,17 @@ export function PublicLiveFeed() {
                   }
                   return (
                     <motion.div
-                      key={row.item.post_uri}
+                      key={row.item.placement === "withheld" ? `withheld-${row.item.position}` : row.item.post_uri}
                       layout="position"
                       transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }}
-                      data-feed-row-uri={row.item.post_uri}
+                      data-feed-row-uri={row.item.placement === "withheld" ? undefined : row.item.post_uri}
                       data-motion-duration={reduceMotion ? "0" : "0.18"}
                     >
                       <LiveFeedRow
                         row={row}
                         adjacent={adjacent}
-                        selected={selectedRow?.item.post_uri === row.item.post_uri}
-                        mobileExpanded={expandedMobileUri === row.item.post_uri}
+                        selected={selectedRow !== null && isPublicFeedRow(selectedRow) && isPublicFeedRow(row) && selectedRow.item.post_uri === row.item.post_uri}
+                        mobileExpanded={isPublicFeedRow(row) && expandedMobileUri === row.item.post_uri}
                         onExplain={handleExplain}
                       />
                     </motion.div>

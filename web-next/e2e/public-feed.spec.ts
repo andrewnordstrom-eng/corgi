@@ -270,7 +270,7 @@ test("supports keyboard-only explanation inspection", async ({ page }, testInfo)
   await expect(page.getByRole("complementary", { name: "Selected post ranking explanation" })).toContainText("Above: position 1")
 })
 
-test("notifies before accepting a reordered snapshot and retains URI selection", async ({ page }, testInfo) => {
+test("clears the old body while notifying, then accepts a reordered snapshot", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chrome", "One desktop flow covers the shared refresh state machine")
   const control: FixtureControl = { snapshotId: "before", orderedUris: [POST_A, POST_B], appViewMode: "complete", snapshotDelayMs: 0, snapshotStatus: 200 }
   await openLoadedFeed(page, control)
@@ -281,7 +281,10 @@ test("notifies before accepting a reordered snapshot and retains URI selection",
   control.orderedUris = [POST_B, POST_A]
   await page.evaluate(() => window.dispatchEvent(new Event("focus")))
   await expect(page.getByRole("button", { name: "Show latest" })).toBeVisible()
-  await expect(page.locator("[data-feed-row-uri]").first()).toHaveAttribute("data-feed-row-uri", POST_A)
+  await expect(page.locator("[data-feed-row-uri]")).toHaveCount(0)
+  const pendingBody = await page.locator("body").evaluate((node) => node.outerHTML)
+  expect(pendingBody).not.toContain(POST_A)
+  expect(pendingBody).not.toContain(POST_B)
 
   await page.getByRole("button", { name: "Show latest" }).click()
   await expect(page.locator("[data-feed-row-uri]").first()).toHaveAttribute("data-feed-row-uri", POST_B)
@@ -356,7 +359,7 @@ async function expectWithdrawn(page: Page, uris: readonly string[]): Promise<voi
   }
 }
 
-for (const appViewMode of ["omit-first", "fail-last-batch", "fail-all"] as const) {
+for (const appViewMode of ["fail-last-batch", "fail-all"] as const) {
   test(`rejects initial ${appViewMode} metadata before rendering`, async ({ page }) => {
     const uris = appViewMode === "fail-last-batch"
       ? Array.from({ length: 26 }, (_, index) => `at://did:plc:fixture/app.bsky.feed.post/${index + 1}`)
@@ -368,8 +371,27 @@ for (const appViewMode of ["omit-first", "fail-last-batch", "fail-all"] as const
   })
 }
 
+test("renders generic placeholders at original positions in a mixed 50-position feed", async ({ page }) => {
+  const uris = Array.from({ length: 50 }, (_, index) => (
+    `at://did:plc:fixture/app.bsky.feed.post/${index === 0 ? "withheld-alpha" : index === 25 ? "withheld-omega" : `visible-${index + 1}`}`
+  ))
+  const control: FixtureControl = { snapshotId: "mixed-50", orderedUris: uris, appViewMode: "omit-first", snapshotDelayMs: 0, snapshotStatus: 200 }
+  await installFeedFixtures(page, control)
+  await page.goto("/feed/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator('[aria-label="Position 1 withheld"]')).toBeVisible()
+  await expect(page.locator('[aria-label="Position 26 withheld"]')).toBeVisible()
+  await expect(page.locator("[data-feed-row-uri]")).toHaveCount(48)
+  const withheld = await page.locator('[aria-label="Position 1 withheld"]').evaluate((node) => node.outerHTML)
+  for (const marker of [uris[0] ?? "", "Post withheld-alpha", "Author WITHHELD-ALPHA", "0.92", "score-mixed-50"]) {
+    expect(withheld).not.toContain(marker)
+  }
+  const body = await page.locator("body").evaluate((node) => node.outerHTML)
+  expect(body).not.toContain(uris[0] ?? "")
+  expect(body).not.toContain(uris[25] ?? "")
+})
+
 for (const appViewMode of ["omit-first", "hide-first", "fail-all"] as const) {
-  test(`withdraws all ${appViewMode} metadata on unchanged Corgi ETag`, async ({ page }) => {
+  test(`handles ${appViewMode} metadata on unchanged Corgi ETag`, async ({ page }) => {
     const control: FixtureControl = { snapshotId: "visibility", orderedUris: [POST_A, POST_B], appViewMode: "complete", snapshotDelayMs: 0, snapshotStatus: 200 }
     const observations = await installFeedFixtures(page, control)
     await page.goto("/feed/", { waitUntil: "domcontentloaded" })
@@ -379,13 +401,24 @@ for (const appViewMode of ["omit-first", "hide-first", "fail-all"] as const) {
     const initialHydrations = observations.appViewRequests.length
     control.appViewMode = appViewMode
     await page.evaluate(() => window.dispatchEvent(new Event("focus")))
-    await expectWithdrawn(page, [POST_A, POST_B])
+    if (appViewMode === "fail-all") {
+      await expectWithdrawn(page, [POST_A, POST_B])
+    } else {
+      await expect(page.locator('[aria-label="Position 1 withheld"]')).toBeVisible()
+      await expect(page.locator("[data-feed-row-uri]")).toHaveCount(1)
+      const body = await page.locator("body").evaluate((node) => node.outerHTML)
+      expect(body).not.toContain(POST_A)
+      expect(body).not.toContain("Post a")
+      expect(body).not.toContain("0.920")
+    }
     expect(observations.snapshotRequests.length - initialSnapshotReads).toBe(1)
     expect(observations.appViewRequests.length - initialHydrations).toBe(1)
-    control.appViewMode = "complete"
-    await page.getByRole("button", { name: "Try again" }).click()
-    await expect(page.getByText("Post a", { exact: true })).toBeVisible()
-    await expect(page.locator("[data-feed-row-uri]")).toHaveCount(2)
+    if (appViewMode === "fail-all") {
+      control.appViewMode = "complete"
+      await page.getByRole("button", { name: "Try again" }).click()
+      await expect(page.getByText("Post a", { exact: true })).toBeVisible()
+      await expect(page.locator("[data-feed-row-uri]")).toHaveCount(2)
+    }
   })
 }
 
@@ -399,9 +432,21 @@ for (const duringAccept of [false, true]) {
     await expect(page.getByRole("button", { name: "Show latest" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Check for updates" })).toHaveAttribute("data-refreshing", "false")
     control.appViewMode = "omit-first"
-    if (duringAccept) await page.getByRole("button", { name: "Show latest" }).click()
-    else await page.evaluate(() => window.dispatchEvent(new Event("focus")))
-    await expectWithdrawn(page, [POST_A, POST_B])
+    if (duringAccept) {
+      await page.getByRole("button", { name: "Show latest" }).click()
+      await expect(page.locator('[aria-label="Position 1 withheld"]')).toBeVisible()
+      await expect(page.locator("[data-feed-row-uri]")).toHaveCount(1)
+      const body = await page.locator("body").evaluate((node) => node.outerHTML)
+      expect(body).not.toContain(POST_B)
+      expect(body).not.toContain("Post b")
+    } else {
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")))
+      await expect(page.getByRole("button", { name: "Show latest" })).toBeVisible()
+      await expect(page.locator("[data-feed-row-uri]")).toHaveCount(0)
+      const body = await page.locator("body").evaluate((node) => node.outerHTML)
+      expect(body).not.toContain(POST_A)
+      expect(body).not.toContain(POST_B)
+    }
   })
 }
 
@@ -414,12 +459,9 @@ for (const status of [502, 503] as const) {
     await page.evaluate(() => window.dispatchEvent(new Event("focus")))
     await expect(page.getByRole("button", { name: "Show latest" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Check for updates" })).toHaveAttribute("data-refreshing", "false")
-    control.snapshotDelayMs = SUPERSEDED_RESPONSE_DELAY_MS
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")))
-    await expect(page.getByRole("button", { name: "Check for updates" })).toHaveAttribute("data-refreshing", "true")
     control.snapshotDelayMs = 0
     control.snapshotStatus = status
-    await page.getByRole("button", { name: "Check for updates" }).click()
+    await page.getByRole("button", { name: "Show latest" }).click()
     await expectWithdrawn(page, [POST_A, POST_B])
     await page.waitForTimeout(SUPERSEDED_RESPONSE_DELAY_MS + 100)
     await expectWithdrawn(page, [POST_A, POST_B])
@@ -452,8 +494,20 @@ test("does not resurrect withdrawn metadata after a superseded late AppView resp
   await expect.poll(() => captured).toBe(true)
   control.appViewMode = "hide-first"
   await page.getByRole("button", { name: "Check for updates" }).click()
-  await expectWithdrawn(page, [POST_A, POST_B])
+  await expect(page.locator('[aria-label="Position 1 withheld"]')).toBeVisible()
+  await expect(page.locator("[data-feed-row-uri]")).toHaveCount(1)
+  await expect(page.getByText("Post b", { exact: true })).toBeVisible()
+  const beforeLateResponse = await page.locator("body").evaluate((node) => node.outerHTML)
+  expect(beforeLateResponse).not.toContain(POST_A)
+  expect(beforeLateResponse).not.toContain("Post a")
+  expect(beforeLateResponse).not.toContain("0.920")
   releaseLate()
   await expect.poll(() => released).toBe(true)
-  await expectWithdrawn(page, [POST_A, POST_B])
+  await expect(page.locator('[aria-label="Position 1 withheld"]')).toBeVisible()
+  await expect(page.locator("[data-feed-row-uri]")).toHaveCount(1)
+  await expect(page.getByText("Post b", { exact: true })).toBeVisible()
+  const afterLateResponse = await page.locator("body").evaluate((node) => node.outerHTML)
+  expect(afterLateResponse).not.toContain(POST_A)
+  expect(afterLateResponse).not.toContain("Post a")
+  expect(afterLateResponse).not.toContain("0.920")
 })

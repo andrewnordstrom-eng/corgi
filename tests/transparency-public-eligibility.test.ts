@@ -7,6 +7,7 @@ vi.mock('../src/db/client.js', () => ({ db: { query: dbQueryMock } }));
 import {
   assertPublicPostEligibility,
   PublicPostEligibilityError,
+  readPublicPostEligibility,
 } from '../src/transparency/public-post-eligibility.js';
 import { publicPostVisibilityReason } from '../src/shared/public-post-visibility.js';
 
@@ -148,5 +149,45 @@ describe('public disclosure eligibility', () => {
       expect(publicPostVisibilityReason({ ...visiblePost(postUri(1)), labels: [{ val: ` ${label.toUpperCase()} ` }] })).not.toBeNull();
     }
     expect(publicPostVisibilityReason({ ...visiblePost(postUri(1)), embed: { record: { $type: 'app.bsky.embed.record#viewBlocked' } } })).not.toBeNull();
+  });
+
+  it('returns an anonymous per-post mask for opted-out and omitted posts while preserving public peers', async () => {
+    const optedOutUri = postUri(1);
+    const missingUri = postUri(2);
+    const publicUri = postUri(3);
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(Response.json({ posts: [
+      { ...visiblePost(optedOutUri), author: { did: 'did:plc:eligibility', handle: 'synthetic.test', labels: [{ val: '!no-unauthenticated' }] } },
+      visiblePost(publicUri),
+    ] }))));
+    dbQueryMock.mockImplementation((query: { values: string[][] }) => Promise.resolve({ rows: localRows(query.values[0]) }));
+
+    const decisions = await readPublicPostEligibility([
+      { postUri: optedOutUri, requiresLocalPost: true },
+      { postUri: missingUri, requiresLocalPost: true },
+      { postUri: publicUri, requiresLocalPost: true },
+    ]);
+
+    expect([...decisions]).toEqual([[optedOutUri, false], [missingUri, false], [publicUri, true]]);
+    expect(dbQueryMock.mock.calls[0][0].values[0]).toEqual([publicUri]);
+    expect(JSON.stringify([...decisions])).not.toContain('no-unauthenticated');
+  });
+
+  it('fails the whole per-post mask when local eligibility infrastructure is unknown', async () => {
+    dbQueryMock.mockRejectedValue(new TypeError('Synthetic database unavailable'));
+    await expect(readPublicPostEligibility([
+      { postUri: postUri(1), requiresLocalPost: true },
+    ])).rejects.toBeInstanceOf(PublicPostEligibilityError);
+  });
+
+  it.each([
+    { cid: undefined },
+    { labels: 'malformed-label-container' },
+    { labels: [{ val: 42 }] },
+  ])('fails closed on malformed post visibility data %#', async (changes) => {
+    const uri = postUri(1);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ posts: [{ ...visiblePost(uri), ...changes }] })));
+    await expect(readPublicPostEligibility([{ postUri: uri, requiresLocalPost: true }]))
+      .rejects.toBeInstanceOf(PublicPostEligibilityError);
+    expect(dbQueryMock).not.toHaveBeenCalled();
   });
 });

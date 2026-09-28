@@ -61,6 +61,12 @@ export interface TransparencyFeedPinnedItem {
   engagement_only_position: null;
 }
 
+export interface TransparencyFeedWithheldItem {
+  position: number;
+  placement: 'withheld';
+  reason: 'Post withheld from the public view';
+}
+
 export type TransparencyFeedItem =
   | TransparencyFeedRankedItem
   | TransparencyFeedScoredPinnedItem
@@ -84,6 +90,10 @@ export interface TransparencyFeedSnapshot {
     relevance: number;
   };
   items: TransparencyFeedItem[];
+}
+
+export interface PublicTransparencyFeedSnapshot extends Omit<TransparencyFeedSnapshot, 'items'> {
+  items: Array<TransparencyFeedItem | TransparencyFeedWithheldItem>;
 }
 
 /**
