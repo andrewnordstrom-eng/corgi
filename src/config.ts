@@ -149,6 +149,10 @@ export const ConfigSchema = z.object({
 
   // API rate limiting
   RATE_LIMIT_ENABLED: zodEnvBool(true),
+  // Independent demo buckets; defaults preserve the previous shared limits.
+  RATE_LIMIT_DEMO_CREATE_MAX: z.coerce.number().int().positive().max(1000).default(10),
+  RATE_LIMIT_DEMO_MUTATION_MAX: z.coerce.number().int().positive().max(1000).default(20),
+  RATE_LIMIT_DEMO_READ_MAX: z.coerce.number().int().positive().max(1000).default(60),
   RATE_LIMIT_GLOBAL_MAX: z.coerce.number().default(200),
   RATE_LIMIT_GLOBAL_WINDOW_MS: z.coerce.number().default(60_000),
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().default(10),

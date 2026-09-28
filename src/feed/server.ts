@@ -266,16 +266,16 @@ export async function createServer(options?: CreateServerOptions) {
       identifierHashSecret: config.DEMO_RATE_LIMIT_HASH_SECRET,
       policies: {
         session_create: {
-          max: config.RATE_LIMIT_LOGIN_MAX,
-          windowMs: config.RATE_LIMIT_LOGIN_WINDOW_MS,
+          max: config.RATE_LIMIT_DEMO_CREATE_MAX,
+          windowMs: 60_000,
         },
         mutation: {
-          max: config.RATE_LIMIT_VOTE_MAX,
-          windowMs: config.RATE_LIMIT_VOTE_WINDOW_MS,
+          max: config.RATE_LIMIT_DEMO_MUTATION_MAX,
+          windowMs: 60_000,
         },
         read: {
-          max: config.RATE_LIMIT_INTERACTIONS_MAX,
-          windowMs: config.RATE_LIMIT_INTERACTIONS_WINDOW_MS,
+          max: config.RATE_LIMIT_DEMO_READ_MAX,
+          windowMs: 60_000,
         },
       },
     })
