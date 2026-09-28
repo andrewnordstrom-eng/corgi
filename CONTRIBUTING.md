@@ -10,6 +10,8 @@ Maintainers also track work in an internal tracker. You don't need access to it;
 
 ## Development Setup
 
+Local setup is manual. You need Node.js 22.19 or newer, Docker Compose, and a Bluesky account for the feed identity values marked REQUIRED in `.env.example`. The sandbox demo also needs its own Redis instance; see the [sandbox contract](docs/lab/demo-shadow-governance-contract.md).
+
 1. Install dependencies:
 ```bash
 npm install

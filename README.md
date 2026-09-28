@@ -79,37 +79,9 @@ New ranking signals plug in through one interface. Implement `ScoringComponent`,
 
 Questions or ideas? [Open a GitHub issue](https://github.com/andrewnordstrom-eng/corgi/issues).
 
-## Run it locally
+## Development status
 
-You need Node.js 22.19 or newer and Docker Compose 2.17 or newer. Publishing a feed record also needs a Bluesky feed identity.
-
-```bash
-git clone https://github.com/andrewnordstrom-eng/corgi.git
-cd corgi
-
-npm install
-npm --prefix web-next install
-npm --prefix web install
-
-# Fill every value marked REQUIRED.
-cp .env.example .env
-
-docker compose up -d --wait --wait-timeout 60 postgres redis
-npm run migrate
-npx tsx scripts/seed-governance.ts
-
-npm --prefix web-next run build
-WEB_DIST_DIR=web-next/out WEB_ROUTING_MODE=export npm run dev
-```
-
-The sandbox demo needs a separate Redis instance. Its setup and isolation rules are in the [sandbox contract](docs/lab/demo-shadow-governance-contract.md).
-
-Before opening a pull request:
-
-```bash
-npm run verify        # backend, tests, CLI, SDK, and both frontends
-npm run docs:verify   # documentation links and references
-```
+Corgi is research software under active development. The code and scoring-component examples are open for inspection and contribution. Running it locally takes manual setup, including a Bluesky account for the feed identity; see [Development Setup](CONTRIBUTING.md#development-setup). Production self-hosting isn't supported yet.
 
 ## How it's built
 
