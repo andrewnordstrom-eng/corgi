@@ -227,16 +227,6 @@ function extractMarkdownSectionByHeadingFragment(content: string, headingFragmen
   return extractMarkdownSection(content, heading);
 }
 
-function extractLineContaining(content: string, needle: string): string {
-  const line = content.split(/\r?\n/).find((candidate) => candidate.includes(needle));
-
-  if (line === undefined) {
-    throw new Error(`Unable to find line containing: ${needle}`);
-  }
-
-  return line;
-}
-
 function publicReceiptDocSections(): PublicReceiptDocSection[] {
   const readme = readFixtureFile(README_FILE);
   const devJournal = readFixtureFile(DEV_JOURNAL_FILE);
@@ -244,8 +234,8 @@ function publicReceiptDocSections(): PublicReceiptDocSection[] {
 
   return [
     {
-      label: 'README.md current product overview',
-      content: extractLineContaining(readme, 'Corgi Commons is a production Bluesky custom feed'),
+      label: 'README.md live receipt example',
+      content: extractMarkdownSection(readme, 'How it works'),
     },
     {
       label: 'docs/dev-journal.md PROJ-1433 entry',
