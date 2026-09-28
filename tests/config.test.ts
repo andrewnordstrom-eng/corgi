@@ -18,6 +18,41 @@ const baseEnv: Record<string, string> = {
 const PRODUCTION_SALT_32 = '12345678901234567890123456789012';
 
 describe('ConfigSchema', () => {
+  it('keeps demo overrides independent of login, voting and interaction limits', () => {
+    const parsed = ConfigSchema.parse({
+      ...baseEnv,
+      RATE_LIMIT_DEMO_CREATE_MAX: '20',
+      RATE_LIMIT_DEMO_MUTATION_MAX: '120',
+      RATE_LIMIT_DEMO_READ_MAX: '180',
+    });
+    expect([parsed.RATE_LIMIT_DEMO_CREATE_MAX, parsed.RATE_LIMIT_DEMO_MUTATION_MAX,
+      parsed.RATE_LIMIT_DEMO_READ_MAX]).toEqual([20, 120, 180]);
+    expect([parsed.RATE_LIMIT_LOGIN_MAX, parsed.RATE_LIMIT_VOTE_MAX,
+      parsed.RATE_LIMIT_INTERACTIONS_MAX]).toEqual([10, 20, 60]);
+    expect([parsed.RATE_LIMIT_LOGIN_WINDOW_MS, parsed.RATE_LIMIT_VOTE_WINDOW_MS,
+      parsed.RATE_LIMIT_INTERACTIONS_WINDOW_MS]).toEqual([60_000, 60_000, 60_000]);
+  });
+
+  it('does not inherit authentication overrides into demo defaults', () => {
+    const parsed = ConfigSchema.parse({
+      ...baseEnv, RATE_LIMIT_LOGIN_MAX: '1', RATE_LIMIT_VOTE_MAX: '2',
+      RATE_LIMIT_INTERACTIONS_MAX: '3',
+    });
+    expect([parsed.RATE_LIMIT_DEMO_CREATE_MAX, parsed.RATE_LIMIT_DEMO_MUTATION_MAX,
+      parsed.RATE_LIMIT_DEMO_READ_MAX]).toEqual([10, 20, 60]);
+  });
+
+  it.each(['RATE_LIMIT_DEMO_CREATE_MAX', 'RATE_LIMIT_DEMO_MUTATION_MAX',
+    'RATE_LIMIT_DEMO_READ_MAX'])('rejects invalid bounded demo setting %s', (key) => {
+    for (const value of ['', '0', '-1', '1.5', 'Infinity', 'NaN', '1001']) {
+      expect(ConfigSchema.safeParse({ ...baseEnv, [key]: value }).success,
+        `${key}=${value}`).toBe(false);
+    }
+    for (const value of ['1', '1000']) {
+      expect(ConfigSchema.safeParse({ ...baseEnv, [key]: value }).success).toBe(true);
+    }
+  });
+
   it('accepts a positive integer FEED_MAX_POSTS value', () => {
     const parsed = ConfigSchema.parse({
       ...baseEnv,
