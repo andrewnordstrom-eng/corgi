@@ -91,7 +91,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/andrewnordstrom-eng/bluesky-community-feed.git"
+    "url": "https://github.com/andrewnordstrom-eng/corgi.git"
   },
   "homepage": "https://feed.corgi.network",
   "author": "Corgi Network",

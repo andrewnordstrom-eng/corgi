@@ -1,256 +1,157 @@
 <p align="center">
   <a href="https://feed.corgi.network/">
-    <img src="web-next/public/images/og/og-card.png" alt="Corgi — a community-ranked Bluesky feed" width="100%">
+    <img src="web-next/public/images/og/og-card.png" alt="Corgi, a community-governed Bluesky feed" width="100%">
   </a>
 </p>
 
 <h1 align="center">Corgi</h1>
 
 <p align="center">
-  <strong>A Bluesky feed communities can inspect and shape.</strong>
+  <strong>The feed your community controls.</strong><br>
+  A Bluesky feed with no black box. Members vote on how posts rank, and every score shows its math.
 </p>
 
 <p align="center">
-  Community-shaped ranking · Inspectable policy · Reproducible shadow demo
-</p>
-
-<p align="center">
-  <a href="https://bsky.app/profile/corgi-network.bsky.social/feed/community-gov"><strong>Open Corgi Commons</strong></a>
+  <a href="https://bsky.app/profile/corgi-network.bsky.social/feed/community-gov"><strong>Open the feed</strong></a>
   ·
-  <a href="https://feed.corgi.network/demo/"><strong>Try the demo</strong></a>
+  <a href="https://feed.corgi.network/feed/"><strong>Explore the live ranking</strong></a>
   ·
-  <a href="https://feed.corgi.network/how-it-works/"><strong>Watch the walkthrough</strong></a>
+  <a href="https://feed.corgi.network/demo/"><strong>Try the sandbox demo</strong></a>
   ·
-  <a href="https://docs.corgi.network/"><strong>Read the docs</strong></a>
+  <a href="https://feed.corgi.network/how-it-works/"><strong>Watch the 4-minute overview</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/deploy.yml"><img src="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/deploy.yml/badge.svg" alt="Deploy status"></a>
-  <a href="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/ci.yml"><img src="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/codeql.yml"><img src="https://github.com/andrewnordstrom-eng/bluesky-community-feed/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/andrewnordstrom-eng/bluesky-community-feed" alt="Repository license"></a>
-  <img src="https://img.shields.io/badge/Node-%3E%3D20.19-339933" alt="Node.js 20.19 or newer">
-  <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict mode">
+  <a href="https://github.com/andrewnordstrom-eng/corgi/actions/workflows/ci.yml"><img src="https://github.com/andrewnordstrom-eng/corgi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/andrewnordstrom-eng/corgi/actions/workflows/codeql.yml"><img src="https://github.com/andrewnordstrom-eng/corgi/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/andrewnordstrom-eng/corgi" alt="Apache-2.0 license"></a>
 </p>
-
-Corgi — short for Community-Oriented Recommendation: Governance and Infrastructure — treats a shared recommender as a community resource.
-
-Corgi Commons is a production Bluesky custom feed and a limited governance pilot. Anyone can view the public feed. Approved pilot participants can collectively govern five global ranking signals, topic priorities, and content rules. A closed round is reviewed and approved before its complete policy is applied and the feed is rescored.
-
-Bluesky renders the ordered posts. Corgi provides the governance and explanation layer: the active policy, score decomposition, epoch history, counterfactuals, and available ranking receipts.
-
-> **Research question:** Can a community meaningfully govern its own recommendation algorithm without giving up speed, legibility, or operational control?
-
-## Start Here
-
-| Surface | What it is | Access |
-|---|---|---|
-| **Corgi Commons** | The live public custom feed served to Bluesky clients | [View or subscribe on Bluesky](https://bsky.app/profile/corgi-network.bsky.social/feed/community-gov) |
-| **Shadow governance demo** | An anonymous, isolated replay over a frozen Corgi Commons comparison corpus | [Try the interactive demo](https://feed.corgi.network/demo/) |
-| **Product walkthrough** | A 4:14 tour of the governance loop and reviewer-safe demo | [Watch how Corgi works](https://feed.corgi.network/how-it-works/) |
-| **Pilot access** | The waitlist for approved production-governance participation | [Request access](https://feed.corgi.network/start/) |
-| **Developer documentation** | Public API, architecture, and operating references | [Open docs.corgi.network](https://docs.corgi.network/) |
-
-## Watch the Governance Loop
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=b1TTIcc5ykU">
-    <img src="https://i.ytimg.com/vi/b1TTIcc5ykU/maxresdefault.jpg" alt="Watch Corgi: A Community-Governed Bluesky Feed" width="840">
-  </a>
+  Accepted to the <a href="https://recsys.acm.org/recsys26/demo-presentations/"><strong>ACM RecSys 2026</strong> Demos track</a> · Andrew Nordstrom, Anas Buhayh, Robin Burke · University of Colorado Boulder
 </p>
 
-The published walkthrough follows the complete path from candidate posts to a community ballot, an approved policy, the ordered Bluesky feed, and an inspectable Corgi receipt. The [How Corgi Works](https://feed.corgi.network/how-it-works/) page pairs the video with an interactive policy replay.
+Most feeds rank posts with rules nobody outside the company can see. Corgi is a custom Bluesky feed where the community sets those rules. Members vote on how much each ranking signal counts. After the result is reviewed, the whole feed reranks under the new policy, and anyone can open a post and see exactly why it landed where it did.
 
-## How a Vote Becomes a Feed
+Bluesky shows the posts. Corgi shows why they're in that order.
 
-1. **Ingest candidates.** Corgi reads public Bluesky activity from Jetstream, persists posts and interactions, and classifies post topics.
-2. **Compute reusable signals.** The scorer evaluates each candidate across recency, engagement, bridging, source diversity, and topic relevance.
-3. **Collect valid ballots.** Approved participants can vote on global signal weights, topic priorities, include/exclude content rules, or any combination of those channels. A ballot must include at least one channel; a signal-weight vote includes the complete normalized five-weight vector.
-4. **Aggregate and review.** Ballots aggregate after the configured voting window. The proposed policy must pass results review and operator approval; a direct transition cannot bypass that lifecycle.
-5. **Rescore and publish.** The approved policy becomes a new epoch, the candidate set is rescored, and the current feed snapshot is served through the AT Protocol feed-generator endpoint.
-6. **Inspect what happened.** Corgi exposes per-post score components, governance history, feed-level statistics, counterfactual rankings, and an append-only governance audit log.
+## How it works
 
-## What Is Live — and What Is a Demo
+1. **Collect.** Corgi reads public Bluesky activity, applies the community's content rules, and tags each post's topics.
+2. **Score.** Every post gets five signals, each from 0 to 1: recency, engagement, bridging, source diversity, and relevance to the community's topic priorities.
+3. **Vote.** Pilot members vote in rounds on the signal weights, topic priorities, and content rules. Votes are aggregated, reviewed, and approved before they take effect.
+4. **Rank and explain.** Each post's score is the sum of signal × weight. Corgi stores every part of that sum, so any ranking can be shown in full.
 
-| Surface | What the repository supports | Boundary |
-|---|---|---|
-| **Production feed** | A live Bluesky custom feed backed by Jetstream ingestion, scheduled scoring, PostgreSQL, Redis, and AT Protocol XRPC routes | Viewing is public; production voting is limited to approved pilot participants |
-| **Production governance** | Signal, topic, and content-rule ballots with a review-and-approval lifecycle before application | Corgi is a limited pilot, not an open self-serve network of community feeds |
-| **Shadow demo** | One reviewer ballot plus 24 deterministic scripted voter archetypes rerank the same frozen comparison corpus | Demo state is isolated in dedicated Redis and never writes production governance, feed state, audit logs, or research exports |
-| **Synthetic voters** | Five transparent preference blocs demonstrate aggregation, inertia, and repeatable multi-epoch behavior | They are not LLM agents and are not validated models of human behavior |
-| **Ranking explanations** | Corgi shows raw signals, weights, contributions, publication adjustments, provenance, and counterfactuals | Rank badges and receipts are Corgi annotations; they are not native Bluesky UI |
-| **Research support** | Participant gating, consent flows, deterministic anonymization, and consent-aware exports | These capabilities make Corgi a research instrument; they are not a claim of completed participant-study results |
+### A real receipt
 
-The demo contract is deliberately stricter than a marketing mock. It freezes an approved snapshot of published Corgi Commons inputs, holds the comparison corpus constant across shadow epochs, and labels any fallback mechanics fixture. See the [shadow-governance contract](docs/lab/demo-shadow-governance-contract.md) for its endpoints, isolation rules, snapshot gates, and receipt semantics.
+This is the score breakdown for the post ranked #1 in Corgi Commons, captured from the live transparency API on 28 September 2026 (post identifiers omitted):
 
-## Ranking Model
+| Signal | Raw score | × Community weight | = Contribution |
+|---|---:|---:|---:|
+| Recency | 0.9163 | 0.25 | 0.2291 |
+| Engagement | 0.8736 | 0.20 | 0.1747 |
+| Bridging | 0.9683 | 0.10 | 0.0968 |
+| Source diversity | 1.0000 | 0.10 | 0.1000 |
+| Relevance | 0.7500 | 0.35 | 0.2625 |
+| **Total** | | | **0.8631** |
 
-The current production registry contains five normalized scoring components:
+Ranked by engagement alone among the same 1,000 published posts, it would sit at **#41**. Under the community's policy it ranks **#1**.
 
-| Component | What it measures | Current method |
-|---|---|---|
-| **Recency** | How recently a post was created | Exponential decay within the configured scoring window |
-| **Engagement** | Likes, reposts, and replies | Log-scaled weighted engagement with diminishing returns |
-| **Bridging** | Whether engagement crosses otherwise dissimilar audiences | Average pairwise Jaccard distance between engager follow sets, with an explicit insufficient-evidence state |
-| **Source diversity** | Whether one author is dominating a ranking batch | Diminishing score for repeated posts from the same author |
-| **Topic relevance** | How well a post's classified topics match community priorities | Confidence-dampened topic-vector relevance against approved topic weights |
+## What's live and what's a preview
 
-Each component first produces a raw score. Corgi multiplies those raw values by the approved signal weights, then sums the weighted contributions into the total score:
-
-```text
-total score = Σ(raw component score × approved signal weight)
-```
-
-Global signal weights sum to `1.0`. Topic priorities affect the relevance component. Eligibility rules and publication-stage adjustments are applied separately. Corgi persists each component's raw value, approved weight, and weighted contribution so a ranking can be reconstructed rather than merely described.
-
-The scoring contract is registry-driven and extensible. External authors can implement `ScoringComponent` against the public `@corgi/feed-sdk` surface, then follow the [component contribution guide](docs/contributing-scoring-components.md) and [working civility example](examples/civility-component/).
-
-## Architecture
-
-```mermaid
-flowchart LR
-    J["Bluesky Jetstream"] --> I["Ingestion and topic classification"]
-    I --> P["PostgreSQL"]
-
-    V["Approved participant ballots"] --> G["Governance epoch and approved policy"]
-    P --> S["Scoring pipeline"]
-    G --> S
-    S --> P
-    S --> R["Redis feed snapshot"]
-
-    B["Bluesky clients"] --> X["AT Protocol XRPC feed endpoint"]
-    X --> R
-
-    U["web-next · CLI · MCP"] <--> A["Fastify governance, transparency, and admin APIs"]
-    A <--> P
-```
-
-- PostgreSQL is the durable source for posts, governance state, score decomposition, audit data, and research records.
-- Redis is the serving layer for the current ranked feed. Anonymous demo sessions use a separate, non-persistent Redis namespace and instance.
-- `web-next/` is the canonical public frontend. `web/` is the legacy Vite frontend retained during migration and is still exercised by the full verification gate.
-
-## Repository Map
-
-| Path | Responsibility |
+| | Status |
 |---|---|
-| [`src/ingestion/`](src/ingestion/) | Jetstream ingestion, cursor recovery, content-label filtering, topic classification |
-| [`src/scoring/`](src/scoring/) | Component registry, scoring pipeline, persistence, publication ordering |
-| [`src/governance/`](src/governance/) | Participant auth, ballots, aggregation, content rules, epoch lifecycle |
-| [`src/feed/`](src/feed/) | Fastify server and AT Protocol feed-generator routes |
-| [`src/transparency/`](src/transparency/) | Public explanations, statistics, counterfactuals, governance audit views |
-| [`src/demo/`](src/demo/) | Isolated deterministic shadow-governance service and frozen release snapshot |
-| [`web-next/`](web-next/) | Canonical Next.js public site, demo, voting, and transparency UI |
-| [`web/`](web/) | Legacy React/Vite compatibility frontend |
-| [`packages/feed-sdk/`](packages/feed-sdk/) | Public scoring-component type surface |
-| [`cli/`](cli/) | `feed-cli` operator interface |
-| [`docs/`](docs/) | Product, architecture, deployment, operations, security, and research evidence |
+| **Corgi Commons feed** | Live. Anyone can view or subscribe in Bluesky. |
+| **Score receipts** | Live. Every post shown in the public feed has a score breakdown. |
+| **Sandbox demo** | Live. Change the policy and watch a fixed set of real posts rerank. No sign-in, and nothing you do touches the real feed. The other 24 voters are simulated. |
+| **Community voting** | Limited pilot. Approved members vote in rounds, reviewed before they apply. No round is open right now. |
+| **Scoring SDK** | Preview. The component contract and a worked example live in this repo; the package is not on npm yet. |
+| **Self-hosting** | Early. Runs locally for development and evaluation; production self-hosting isn't supported yet. |
+| **Communities beyond Corgi Commons** | Not yet. Corgi runs one community feed today. |
 
-## Local Development
+Nothing here reports results from a user study. The demo shows the mechanism; it is not evidence about how people vote.
 
-### Prerequisites
+## Build with Corgi
 
-- Node.js `>=20.19.0`
-- Docker with Docker Compose v2.17.0 or newer
-- A Bluesky feed identity and app password if you intend to publish or update a feed record
+**The code is open.** Corgi is Apache-2.0. Fork it, run it, change it.
 
-### Install and run
+New ranking signals plug in through one interface. Implement `ScoringComponent`, register it, and it gets a votable weight and a place in every receipt. See the [component guide](docs/contributing-scoring-components.md), the [civility example](examples/civility-component/), and the [design record](docs/adr/ADR-0001-extensible-scoring-components.md).
+
+Questions or ideas? [Open a GitHub issue](https://github.com/andrewnordstrom-eng/corgi/issues).
+
+## Run it locally
+
+You need Node.js 22.19 or newer and Docker Compose 2.17 or newer. Publishing a feed record also needs a Bluesky feed identity.
 
 ```bash
-git clone https://github.com/andrewnordstrom-eng/bluesky-community-feed.git
-cd bluesky-community-feed
+git clone https://github.com/andrewnordstrom-eng/corgi.git
+cd corgi
 
-# The full verification gate covers the backend and both frontends.
 npm install
-cd web-next
-npm install
-cd ../web
-npm install
-cd ..
+npm --prefix web-next install
+npm --prefix web install
 
-# Fill every value marked REQUIRED before starting the full service.
+# Fill every value marked REQUIRED.
 cp .env.example .env
 
-# Start local PostgreSQL and the primary Redis instance, then wait for both
-# Compose health checks to pass before running migrations.
 docker compose up -d --wait --wait-timeout 60 postgres redis
-
 npm run migrate
 npx tsx scripts/seed-governance.ts
 
-# Build the canonical static frontend, then serve it from Fastify.
 npm --prefix web-next run build
 WEB_DIST_DIR=web-next/out WEB_ROUTING_MODE=export npm run dev
 ```
 
-The base Compose file starts PostgreSQL and the primary Redis instance. Running the anonymous demo locally also requires its isolated Redis instance; its invariants and configuration are documented in the [shadow-governance contract](docs/lab/demo-shadow-governance-contract.md).
+The sandbox demo needs a separate Redis instance. Its setup and isolation rules are in the [sandbox contract](docs/lab/demo-shadow-governance-contract.md).
 
-### Verify a change
-
-```bash
-# Backend, tests, CLI, SDK, legacy web lint/build, and canonical web-next build
-npm run verify
-
-# Documentation links, commands, freshness, and repository references
-npm run docs:verify
-
-# Useful narrow checks
-npm test -- --run
-npm --prefix web-next run build
-npm run cli -- --help
-```
-
-## Interfaces
-
-<details>
-<summary><strong>Public and authenticated API surfaces</strong></summary>
-
-- **AT Protocol:** `getFeedSkeleton`, `describeFeedGenerator`, and feed interactions under `/xrpc/app.bsky.feed.*`
-- **Transparency:** per-post explanations, feed statistics, counterfactuals, and the governance audit log under `/api/transparency/*`
-- **Governance:** session auth, ballots, current weights, topic catalog, content rules, epochs, research consent, and waitlist routes under `/api/governance/*`
-- **Admin:** protected governance lifecycle, feed health, participant, topic, interaction, and export routes under `/api/admin/*`
-- **MCP:** Streamable HTTP admin tooling at `/mcp`
-- **OpenAPI:** public reference at [docs.corgi.network](https://docs.corgi.network/); Swagger UI at `/api/docs` is admin-gated in production
-
-</details>
-
-<details>
-<summary><strong>Operator CLI</strong></summary>
-
-The CLI uses the same authenticated backend as the web administration surface; it does not require direct VPS access.
+Before opening a pull request:
 
 ```bash
-npm run cli -- --help
-npm run cli -- epoch status
-npm run cli -- votes summary --epoch 1
-npm run cli -- feed health
-npm run cli -- topics list
+npm run verify        # backend, tests, CLI, SDK, and both frontends
+npm run docs:verify   # documentation links and references
 ```
 
-</details>
+## How it's built
 
-## Documentation
+```mermaid
+flowchart LR
+    J["Bluesky Jetstream"] --> I["Ingestion and topic tagging"]
+    I --> P["PostgreSQL"]
+    V["Member ballots"] --> G["Approved policy"]
+    P --> S["Scoring"]
+    G --> S
+    S --> P
+    S --> R["Redis feed snapshot"]
+    B["Bluesky apps"] --> X["Feed endpoint"]
+    X --> R
+    U["Website · CLI · MCP"] <--> A["Governance and transparency APIs"]
+    A <--> P
+```
 
-| Document | Use it for |
+PostgreSQL holds posts, policy, and every score breakdown. Redis serves the current ranked feed. The sandbox demo keeps its own state in a separate Redis instance and never changes the real feed.
+
+| Path | What's there |
 |---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Current mission, outcomes, and non-goals |
-| [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) | Deeper system and data-flow tour |
-| [`docs/lab/demo-shadow-governance-contract.md`](docs/lab/demo-shadow-governance-contract.md) | Exact public-demo behavior and evidence boundary |
-| [`docs/contributing-scoring-components.md`](docs/contributing-scoring-components.md) | Adding a scoring component through the public SDK |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production deployment and rollback |
-| [`docs/OPS_RUNBOOK.md`](docs/OPS_RUNBOOK.md) | Operations, health checks, incidents, and recovery |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Security architecture and threat analysis |
-| [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution and pull-request workflow |
-| [`CHANGELOG.md`](CHANGELOG.md) | Released changes |
+| [`src/ingestion/`](src/ingestion/) | Reading Bluesky activity, content rules, topic tagging |
+| [`src/scoring/`](src/scoring/) | Signals, the scoring pipeline, stored breakdowns |
+| [`src/governance/`](src/governance/) | Ballots, aggregation, review and approval |
+| [`src/transparency/`](src/transparency/) | Public receipts, feed stats, audit views |
+| [`src/demo/`](src/demo/) | The isolated sandbox demo |
+| [`web-next/`](web-next/) | The website |
+| [`packages/feed-sdk/`](packages/feed-sdk/) | The scoring-component contract |
+| [`cli/`](cli/) | The operator CLI |
 
-## Research and Citation
+Deeper references: [system overview](docs/SYSTEM_OVERVIEW.md), [architecture](docs/ARCHITECTURE.md), [design records](docs/adr/), [operations runbook](docs/OPS_RUNBOOK.md), [API reference](https://docs.corgi.network/).
 
-Corgi is an open-source research instrument for studying community-governed recommendation. Its central question is collective rather than individual: how can a community set the objective of a recommender it shares? The system makes the resulting policy, score decomposition, and changes across epochs inspectable while keeping participant consent and export boundaries explicit.
+## Research
 
-The shadow demo demonstrates the mechanism, not a result about human behavior. One reviewer ballot and 24 deterministic synthetic voters rerank a fixed post set so within-session rank changes can be attributed to policy changes rather than corpus drift. The synthetic electorate is not evidence that the voter archetypes model people or that a human community has reached consensus.
+The name comes from the research project behind it: CORGI, Community-Oriented Recommendation: Governance and Infrastructure. The question it studies is collective rather than individual: can a community set the objective of a recommender it shares, and keep that process legible?
 
-If you use Corgi in research, cite the repository URL and the exact commit SHA used for the analysis. Treat the software's capabilities, the public shadow demo, and any human-study findings as separate claims.
+The paper, *CORGI: Communal Feed Governance for Bluesky*, was accepted to the [ACM RecSys 2026 Demos track](https://recsys.acm.org/recsys26/demo-presentations/). If you use Corgi in research, cite the paper and the exact commit you used. Keep claims about the software, the sandbox demo, and any future study results separate.
 
-## License
+## Contributing, security, and license
 
-Apache-2.0 — see [`LICENSE`](LICENSE).
+- [Contributing](CONTRIBUTING.md): how to propose changes and new scoring components.
+- [Security](SECURITY.md): report vulnerabilities privately, not in public issues.
+- [Code of conduct](CODE_OF_CONDUCT.md).
+- License: [Apache-2.0](LICENSE). The license covers the code, not the Corgi name or logo.
