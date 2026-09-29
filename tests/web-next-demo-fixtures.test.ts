@@ -367,6 +367,19 @@ describe('web-next demo receipt fixtures', () => {
     const components = extractMarkdownSection(capture, 'Component Breakdown');
     const fields = extractMarkdownSection(capture, 'Receipt Fields');
 
+    const collected = /^Collected: (\d{4})-(\d{2})-(\d{2})T/m.exec(capture);
+    if (collected === null) {
+      throw new Error('README receipt capture record is missing its Collected timestamp');
+    }
+    const [, year, month, day] = collected;
+    const monthName = new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleString('en-US', {
+      month: 'long',
+      timeZone: 'UTC',
+    });
+    expect(readmeReceipt).toContain(
+      `captured from the live transparency API on ${Number(day)} ${monthName} ${year}`,
+    );
+
     for (const label of ['Recency', 'Engagement', 'Bridging', 'Source diversity', 'Relevance']) {
       const [raw, weight, weighted] = captureTableValue(components, label).map(Number);
       expect(readmeReceipt).toContain(
