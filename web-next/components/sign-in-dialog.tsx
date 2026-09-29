@@ -11,8 +11,74 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/components/auth-provider"
-import { waitlistApi } from "@/lib/api/client"
+import { waitlistApi, interestApi } from "@/lib/api/client"
 import { classifySignInFailure, isCurrentDialogRequest } from "@/lib/sign-in-request"
+
+interface ContactInterestFormProps {
+  onPilot: () => void
+  onClose: () => void
+}
+
+function ContactInterestForm({ onPilot, onClose }: ContactInterestFormProps) {
+  const [email, setEmail] = useState("")
+  const [contactHandle, setContactHandle] = useState("")
+  const [interests, setInterests] = useState<string[]>([])
+  const [contactNote, setContactNote] = useState("")
+  const [consent, setConsent] = useState(false)
+  const [website, setWebsite] = useState("")
+  const [state, setState] = useState<"idle" | "submitting" | "success">("idle")
+  const [error, setError] = useState<string | null>(null)
+  const pending = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (pending.current) return
+    pending.current = true
+    setState("submitting")
+    setError(null)
+    try {
+      await interestApi.submit({ email, handle: contactHandle, interests, note: contactNote, contactConsent: consent, website })
+      if (mounted.current) setState("success")
+    } catch (err) {
+      if (mounted.current) {
+        setState("idle")
+        setError(axios.isAxiosError(err) && err.response?.status === 429
+          ? "Too many requests from this network. Please try again in ten minutes."
+          : "We couldn't save your interest. Please try again.")
+      }
+    } finally {
+      pending.current = false
+    }
+  }
+  const fieldClass = "bg-background border-border rounded-xl h-11 px-4 text-sm focus-visible:ring-primary"
+  return (
+    <div className="max-h-[85dvh] overflow-y-auto px-6 py-8 sm:px-8">
+      <DialogTitle className="font-display text-2xl font-bold tracking-tight">{state === "success" ? "Thanks for your interest." : "Stay in touch with Corgi"}</DialogTitle>
+      <DialogDescription className="mt-2 text-sm leading-relaxed text-foreground/70">
+        {state === "success" ? "Your interest is recorded. We may email you about the interests you selected. No account or voting access has been created."
+          : "Interested in using Corgi, building with it, or research? Leave your email. A Bluesky account isn't required."}
+      </DialogDescription>
+      {state === "success" ? <Button onClick={onClose} className="mt-6 rounded-full">Done</Button> : (
+        <form onSubmit={submit} className="mt-6 flex flex-col gap-4">
+          <div className="grid gap-2"><Label htmlFor="interest-email">Email</Label><Input className={fieldClass} id="interest-email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></div>
+          <div className="grid gap-2"><Label htmlFor="interest-handle">Bluesky handle <span className="font-normal text-foreground/65">(optional)</span></Label><Input className={fieldClass} id="interest-handle" placeholder="you.bsky.social" autoComplete="off" maxLength={254} value={contactHandle} onChange={e => setContactHandle(e.target.value)} /></div>
+          <fieldset className="grid gap-2"><legend className="mb-2 text-sm font-medium">What interests you? Choose at least one.</legend>
+            {[["use", "Using Corgi"], ["build", "Building with Corgi"], ["research", "Research collaboration"], ["updates", "Project updates"]].map(([value, label]) => (
+              <label key={value} className="flex min-h-9 items-center gap-3 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={interests.includes(value)} onChange={e => setInterests(previous => e.target.checked ? [...previous, value] : previous.filter(item => item !== value))} />{label}</label>
+            ))}
+          </fieldset>
+          <div className="grid gap-2"><Label htmlFor="interest-note">What would you like to do? <span className="font-normal text-foreground/65">(optional)</span></Label><Textarea id="interest-note" maxLength={500} rows={3} value={contactNote} onChange={e => setContactNote(e.target.value)} /><p className="text-xs text-foreground/65">Up to 500 characters. Please don&rsquo;t include sensitive information.</p></div>
+          <div hidden aria-hidden="true"><label htmlFor="interest-website">Website</label><input id="interest-website" name="website" tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} /></div>
+          <label className="flex items-start gap-3 text-sm leading-relaxed"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-primary" required checked={consent} onChange={e => setConsent(e.target.checked)} /><span>Corgi may email me about my selected interests. This is not consent to participate in research. <Link href="/privacy" className="underline underline-offset-2">Privacy policy</Link></span></label>
+          {error && <p role="alert" className="text-sm text-status-error">{error}</p>}
+          <Button type="submit" disabled={state === "submitting" || interests.length === 0 || !consent} className="h-11 rounded-full">{state === "submitting" ? "Saving…" : "Register interest"}</Button>
+          <button type="button" onClick={onPilot} disabled={state === "submitting"} className="text-sm text-primary underline underline-offset-2">Looking for pilot voting access? Join the pilot waitlist.</button>
+        </form>
+      )}
+    </div>
+  )
+}
 
 type AccessMode = "signin" | "waitlist"
 
@@ -34,6 +100,7 @@ interface SignInDialogProps {
 export function SignInDialog({ open, onOpenChange, initialMode = "signin", redirectOnSuccess }: SignInDialogProps) {
   const router = useRouter()
   const { login, cancelLogin } = useAuth()
+  const [contactMode, setContactMode] = useState(true)
   const [mode, setMode] = useState<AccessMode>(initialMode)
 
   // Shared handle across both modes so switching carries it over.
@@ -73,6 +140,7 @@ export function SignInDialog({ open, onOpenChange, initialMode = "signin", redir
     }
     cancelLogin()
     setMode(initialMode)
+    setContactMode(true)
     setHandle("")
     setPassword("")
     setShowPassword(false)
@@ -103,6 +171,7 @@ export function SignInDialog({ open, onOpenChange, initialMode = "signin", redir
     cancelLogin()
     setSignInLoading(false)
     setMode("waitlist")
+    setContactMode(false)
     setWaitlistState("idle")
     setWaitlistError(null)
   }
@@ -172,6 +241,9 @@ export function SignInDialog({ open, onOpenChange, initialMode = "signin", redir
     }}>
       <DialogContent className="bg-card border border-border shadow-xl rounded-2xl p-0 max-w-[440px] w-full overflow-hidden gap-0">
 
+        {mode === "waitlist" && contactMode ? (
+          <ContactInterestForm onPilot={() => setContactMode(false)} onClose={closeDialog} />
+        ) : (<>
         {/* Header band */}
         <div className="px-8 pt-8 pb-6 flex flex-col items-center gap-3 border-b border-border">
           <Image src="/images/corgi-icon.svg" alt="Corgi" width={51} height={36} className="w-[51px] h-9" />
@@ -380,6 +452,7 @@ export function SignInDialog({ open, onOpenChange, initialMode = "signin", redir
           </form>
         )}
 
+        </>)}
       </DialogContent>
     </Dialog>
   )

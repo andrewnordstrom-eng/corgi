@@ -543,3 +543,11 @@ export const consentApi = {
     return response.data;
   },
 };
+
+/** Contact intake is independent of pilot voting access. */
+export const interestApi = {
+  submit: async (payload: { email: string; handle: string; interests: string[]; note: string; contactConsent: boolean; website: string }): Promise<WaitlistJoinResponse> => {
+    const response = await api.post<WaitlistJoinResponse>('/api/interest', payload);
+    return waitlistJoinResponseSchema.parse(response.data);
+  },
+};

@@ -36,6 +36,10 @@ export function buildRouteRateLimitConfig(
     };
   }
 
+  if (url === '/api/interest') {
+    return { max: 20, timeWindow: 600_000 };
+  }
+
   if (url.startsWith('/api/governance/auth/login')) {
     return {
       max: config.RATE_LIMIT_LOGIN_MAX,

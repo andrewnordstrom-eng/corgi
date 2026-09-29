@@ -37,11 +37,11 @@ export default function SignInPage() {
         <div className="w-full max-w-xl text-center">
           <p className="text-[11px] font-mono uppercase tracking-[0.22em] text-foreground/55">Access</p>
           <h1 className="mt-3 font-display text-3xl md:text-4xl font-bold tracking-tight text-foreground leading-tight text-balance">
-            Corgi voting is in a limited pilot.
+            Stay in touch with Corgi.
           </h1>
           <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-foreground/60">
-            We&rsquo;re opening voting to communities in batches. Join the waitlist with your Bluesky handle and we&rsquo;ll
-            get you in as we expand &mdash; the demo and every transparency page stay open to everyone in the meantime.
+            Leave your email if you&rsquo;re interested in using Corgi, building with it, or research collaboration.
+            A Bluesky handle is optional. Pilot voting access is separate; the demo is open without an account.
           </p>
 
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -49,7 +49,7 @@ export default function SignInPage() {
               onClick={() => openDialog("waitlist")}
               className="bg-primary text-primary-foreground hover:bg-primary-dark rounded-full px-7 py-3 text-base font-medium shadow-[0_2px_8px_rgba(200,97,44,0.3)] transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              Join the waitlist
+              Register interest
             </Button>
             <button
               onClick={() => openDialog("signin")}
