@@ -21,13 +21,16 @@ const SUCCESS = { success: true, message: 'Thanks—your interest is recorded. W
 export function registerInterestRoute(app: FastifyInstance): void {
   app.post('/api/interest', { bodyLimit: 4096 }, async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header('Cache-Control', 'no-store');
+    // Return the same response before validating other fields in a bot submission.
+    if (typeof request.body === 'object' && request.body !== null &&
+        'website' in request.body && typeof request.body.website === 'string' && request.body.website.length > 0) {
+      return reply.send(SUCCESS);
+    }
     const parsed = InterestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'ValidationError', message: 'Check your email, optional handle, interests and contact permission.' });
     }
-    const { email, handle, interests, note, website } = parsed.data;
-    // Identical response avoids teaching simple form-fill bots about this trap.
-    if (website) return reply.send(SUCCESS);
+    const { email, handle, interests, note } = parsed.data;
     try {
       await db.query(
         `INSERT INTO contact_interest (email, handle, interests, note, consent_version)

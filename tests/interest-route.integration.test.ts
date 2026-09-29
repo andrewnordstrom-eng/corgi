@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 // Opt-in only: this suite owns a disposable database, never a production URL.
 const databaseUrl = process.env.INTEREST_TEST_DATABASE_URL;
@@ -19,8 +19,12 @@ describe.skipIf(!databaseUrl)('contact interest with real PostgreSQL', () => {
     ({ db, healthDb } = await import('../src/db/client.js'));
     ({ registerInterestRoute: register } = await import('../src/governance/routes/interest.js'));
     ({ buildRouteRateLimitConfig: rateConfig } = await import('../src/feed/rate-limit-config.js'));
+    const tablesBefore = (await db.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).rows.map(row => row.tablename);
     await db.query(readFileSync('src/db/migrations/045_contact_interest.sql', 'utf8'));
+    const tablesAfter = (await db.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).rows.map(row => row.tablename);
+    expect(tablesAfter).toEqual([...tablesBefore, 'contact_interest'].sort());
   });
+  beforeEach(async () => { await db.query('TRUNCATE contact_interest RESTART IDENTITY'); });
   afterAll(async () => { await db?.end(); await healthDb?.end(); });
 
   it('persists email-only interest and preserves first submission under concurrent duplicates', async () => {
@@ -31,7 +35,6 @@ describe.skipIf(!databaseUrl)('contact interest with real PostgreSQL', () => {
     for (const response of duplicates) expect(response.body).toBe(first.body);
     const rows = await db.query('SELECT email, handle, interests, note, consent_version FROM contact_interest');
     expect(rows.rows).toEqual([{ email: 'visitor@example.test', handle: null, interests: ['research'], note: null, consent_version: 'contact-interest-v1' }]);
-    expect((await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows).toEqual([{ tablename: 'contact_interest' }]);
     await app.close();
   });
   it('accepts an optional normalized handle but rejects bad input and silently drops honeypots', async () => {
@@ -43,7 +46,10 @@ describe.skipIf(!databaseUrl)('contact interest with real PostgreSQL', () => {
     }
     const bot = await app.inject({ method: 'POST', url: '/api/interest', payload: { ...payload, email: 'bot@example.test', website: 'filled' } });
     expect(bot.statusCode).toBe(200);
-    expect((await db.query('SELECT COUNT(*)::int AS n FROM contact_interest')).rows[0].n).toBe(2);
+    const invalidBot = await app.inject({ method: 'POST', url: '/api/interest', payload: { email: 'bad', website: 'x' } });
+    expect(invalidBot.statusCode).toBe(200);
+    expect(invalidBot.body).toBe(bot.body);
+    expect((await db.query('SELECT COUNT(*)::int AS n FROM contact_interest')).rows[0].n).toBe(1);
     expect(bot.headers['cache-control']).toBe('no-store');
     expect((await app.inject({ method: 'POST', url: '/api/interest', payload: { ...payload, note: 'x'.repeat(5000) } })).statusCode).toBe(413);
     await app.close();
