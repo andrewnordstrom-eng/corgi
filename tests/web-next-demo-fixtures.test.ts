@@ -22,6 +22,12 @@ const LAB_METRICS_PACKET_FILE = path.join(
   'lab',
   '2026-07-07-recsys-live-metrics-packet.md',
 );
+const README_RECEIPT_CAPTURE_FILE = path.join(
+  REPO_ROOT,
+  'docs',
+  'lab',
+  '2026-09-28-readme-receipt-capture.md',
+);
 
 const UI_FIXTURE_FILES = [
   path.join(REPO_ROOT, 'web-next', 'components', 'changelog-section.tsx'),
@@ -34,6 +40,7 @@ const PUBLIC_RECEIPT_DOC_FILES = [
   README_FILE,
   DEV_JOURNAL_FILE,
   LAB_METRICS_PACKET_FILE,
+  README_RECEIPT_CAPTURE_FILE,
 ];
 
 const PUBLIC_RECEIPT_EXAMPLE_SECTION_FILES = [
@@ -259,7 +266,22 @@ function publicReceiptDocSections(): PublicReceiptDocSection[] {
       label: 'metrics packet copy guidance',
       content: extractMarkdownSection(labMetricsPacket, 'Copy Guidance'),
     },
+    {
+      label: 'README receipt capture record',
+      content: readFixtureFile(README_RECEIPT_CAPTURE_FILE),
+    },
   ];
+}
+
+function captureTableValue(content: string, rowLabel: string): string[] {
+  const rowPattern = new RegExp(`^\\| ${escapeRegExp(rowLabel)} \\|((?: \`[^\`]+\` \\|)+)\\s*$`, 'm');
+  const match = rowPattern.exec(content);
+
+  if (match === null) {
+    throw new Error(`README receipt capture record is missing the ${rowLabel} row`);
+  }
+
+  return [...(match[1] ?? '').matchAll(/`([^`]+)`/g)].map((cell) => cell[1] ?? '');
 }
 
 describe('web-next demo receipt fixtures', () => {
@@ -306,6 +328,7 @@ describe('web-next demo receipt fixtures', () => {
       'README.md',
       'docs/dev-journal.md',
       'docs/lab/2026-07-07-recsys-live-metrics-packet.md',
+      'docs/lab/2026-09-28-readme-receipt-capture.md',
     ]);
 
     for (const section of publicReceiptDocSections()) {
@@ -336,6 +359,32 @@ describe('web-next demo receipt fixtures', () => {
     expect(
       handles.filter((handle) => !README_ALLOWED_HANDLES.has(handle.toLowerCase())),
     ).toEqual([]);
+  });
+
+  it('keeps the README receipt table bound to the checked-in capture record', () => {
+    const readmeReceipt = extractMarkdownSection(readFixtureFile(README_FILE), 'How it works');
+    const capture = readFixtureFile(README_RECEIPT_CAPTURE_FILE);
+    const components = extractMarkdownSection(capture, 'Component Breakdown');
+    const fields = extractMarkdownSection(capture, 'Receipt Fields');
+
+    for (const label of ['Recency', 'Engagement', 'Bridging', 'Source diversity', 'Relevance']) {
+      const [raw, weight, weighted] = captureTableValue(components, label).map(Number);
+      expect(readmeReceipt).toContain(
+        `| ${label} | ${raw.toFixed(4)} | ${weight.toFixed(2)} | ${weighted.toFixed(4)} |`,
+      );
+    }
+
+    const [total] = captureTableValue(fields, 'Total score');
+    const [engagementRank] = captureTableValue(fields, 'Pure-engagement rank');
+    const [governedRank] = captureTableValue(fields, 'Community-governed rank');
+    const [publishedEntries] = captureTableValue(fields, 'Published entries');
+
+    expect(readmeReceipt).toContain(`| **Total** | | | **${Number(total).toFixed(4)}** |`);
+    expect(readmeReceipt).toContain(
+      `among the same ${Number(publishedEntries).toLocaleString('en-US')} published posts, it would sit at **#${engagementRank}**`,
+    );
+    expect(readmeReceipt).toContain(`it ranks **#${governedRank}**`);
+    expect(readmeReceipt).toContain('(docs/lab/2026-09-28-readme-receipt-capture.md)');
   });
 
   it('keeps the public post explanation section free of structural raw identifiers', () => {

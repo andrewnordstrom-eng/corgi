@@ -44,7 +44,7 @@ Bluesky shows the posts. Corgi shows why they're in that order.
 
 ### A real receipt
 
-This is the score breakdown for the post ranked #1 in Corgi Commons, captured from the live transparency API on 28 September 2026 (post identifiers omitted):
+This is the score breakdown for the post ranked #1 in Corgi Commons, captured from the live transparency API on 28 September 2026 (post identifiers omitted; full values in the [capture record](docs/lab/2026-09-28-readme-receipt-capture.md)):
 
 | Signal | Raw score | × Community weight | = Contribution |
 |---|---:|---:|---:|
