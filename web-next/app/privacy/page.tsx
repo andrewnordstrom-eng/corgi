@@ -34,7 +34,7 @@ const SECTIONS = [
           <LI><Strong>Contact interest</Strong> — your email, optional Bluesky handle, selected interests, optional note and contact permission are stored separately from voting applications. We use them to follow up about your selected interests, not as research participation or voting approval. Contact hello@corgi.network to request deletion.</LI>
           <LI><Strong>Waitlist submissions</Strong> — the Bluesky handle and optional note you provide when requesting pilot voting access. The request is retained after it is approved or rejected as part of the governance record; contact us to request its deletion.</LI>
         </UL>
-        <P>We do <Strong>not</Strong> collect your Bluesky password, your post content, your social graph, or any off-platform behaviour.</P>
+        <P>To generate the feed, Corgi processes public Bluesky posts and engagement records, including likes and follows. Signing in uses a Bluesky app password, not your main Bluesky password.</P>
       </>
     ),
   },
@@ -45,7 +45,7 @@ const SECTIONS = [
       <>
         <UL>
           <LI><Strong>Feed governance</Strong> — your votes are aggregated (never exposed individually) to set feed ranking weights for each round.</LI>
-          <LI><Strong>Audit trail</Strong> — operator actions (not participant votes) are logged in the public audit log, including the operator&rsquo;s DID.</LI>
+          <LI><Strong>Audit trail</Strong> — Operator actions are recorded in an audit log. Public access to the audit log is currently paused.</LI>
           <LI><Strong>Research (opt-in only)</Strong> — if you have consented, anonymised interaction data may be shared with academic research partners studying community-governed recommendation systems.</LI>
         </UL>
         <P>We do not sell, rent, or share your personal data with third parties for advertising or commercial purposes.</P>
@@ -57,11 +57,10 @@ const SECTIONS = [
     heading: "What is publicly visible",
     body: (
       <>
-        <P>Corgi is built on a transparency principle. The following is always public:</P>
+        <P>The public feed provides ranking information where available. Some governance pages and APIs are currently paused.</P>
         <UL>
-          <LI>The aggregated weights applied each round (not individual votes).</LI>
-          <LI>The operator audit log (operator DID, action type, timestamp — not vote data).</LI>
-          <LI>Per-post score breakdowns (the math behind why any Corgi-scored post ranked as it did).</LI>
+          <LI>The weights associated with the published feed, where available.</LI>
+          <LI>Per-post score breakdowns for posts that are publicly viewable and have a published receipt.</LI>
         </UL>
         <P><Strong>Your individual vote is never public.</Strong> Aggregate statistics (e.g. total vote count, participation rate) may be surfaced on the dashboard, but cannot be traced back to you.</P>
       </>
@@ -74,6 +73,7 @@ const SECTIONS = [
       <>
         <P>Governance votes are retained per round and archived when a round closes. We retain historical round data indefinitely to support the audit trail. You may request deletion of your participation data by contacting us.</P>
         <P>Contact-interest records do not expire automatically. We retain them unless you request deletion. You can also ask us to stop contacting you about your selected interests.</P>
+        <P>Deleted records may remain in restricted backups until those backups are replaced. If a backup is restored, deletion and contact-withdrawal requests must be reapplied before any contact follow-up.</P>
         <P>Session data is deleted on sign-out or app password revocation.</P>
       </>
     ),
