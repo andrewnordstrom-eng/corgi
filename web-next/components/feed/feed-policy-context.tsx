@@ -32,7 +32,7 @@ export function FeedPolicyContext({ snapshot }: { readonly snapshot: PublicFeedS
       </div>
 
       <p className="mt-3 max-w-3xl text-sm leading-relaxed text-foreground/70">
-        This feed is ranked by a pilot policy set during early testing, not yet by an open community vote. Every post gets five signal scores; each is multiplied by its weight below, and the results are added.
+        This feed is ranked by a pilot policy set during early testing, not yet by an open community vote. Each scored post gets five signal scores; each is multiplied by its weight below, and the results are added.
       </p>
 
       <div

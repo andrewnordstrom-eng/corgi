@@ -78,6 +78,22 @@ describe("summarizeFeedPolicy", () => {
     expect(summary.weights.find((entry) => entry.key === "engagement")?.share).toBeCloseTo(0.3, 10)
   })
 
+  it("normalizes bar shares when weights do not total 1 but keeps raw percentages", () => {
+    const summary = summarizeFeedPolicy(snapshot([rankedItem(1)], {
+      recency: 0.25,
+      engagement: 0.2,
+      bridging: 0.1,
+      source_diversity: 0.1,
+      relevance: 0.45,
+    }))
+    const byKey = Object.fromEntries(summary.weights.map((entry) => [entry.key, entry]))
+    expect(byKey.relevance.percent).toBe("45%")
+    expect(byKey.relevance.share).toBeCloseTo(0.45 / 1.1, 10)
+    expect(byKey.recency.percent).toBe("25%")
+    expect(byKey.recency.share).toBeCloseTo(0.25 / 1.1, 10)
+    expect(summary.weights.reduce((sum, entry) => sum + entry.share, 0)).toBeCloseTo(1, 10)
+  })
+
   it("names every signal tied for the largest weight", () => {
     const summary = summarizeFeedPolicy(snapshot([rankedItem(1)], {
       recency: 0.3,

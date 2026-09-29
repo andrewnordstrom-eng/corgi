@@ -282,8 +282,10 @@ test("explains the active policy above the feed with a keyboard-operable disclos
     }
   })
   const control: FixtureControl = { snapshotId: "policy-context", orderedUris: [POST_A, POST_B], appViewMode: "complete", snapshotDelayMs: 0, snapshotStatus: 200 }
+  await page.setViewportSize({ width: 375, height: 900 })
   await openLoadedFeed(page, control)
   const policy = page.getByRole("region", { name: "How this feed is ranked" })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   const policyBox = await policy.boundingBox()
   const firstRowBox = await page.locator("[data-feed-row-uri]").first().boundingBox()
   expect(policyBox).not.toBeNull()
