@@ -15,6 +15,7 @@ import {
   RefreshCw,
 } from "lucide-react"
 import { BlueskyPostCard, RANK_COL_CLASS, RankColumnHeader } from "@/components/feed/bluesky-feed"
+import { FeedPolicyContext } from "@/components/feed/feed-policy-context"
 import { Button } from "@/components/ui/button"
 import { Container } from "@/components/ui/layout"
 import { HeroGlow, HERO_TOP, PageHero } from "@/components/ui/page-hero"
@@ -365,22 +366,6 @@ function FeedFailure({ failure, onRetry }: { readonly failure: FailureState; rea
   )
 }
 
-function PolicyWeights({ snapshot }: { readonly snapshot: PublicFeedSnapshot }) {
-  return (
-    <div className="border-t border-border/60 bg-biscuit/10 px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-foreground/50">Active weights</span>
-        {SIGNAL_KEYS.map((key) => (
-          <span key={key} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-foreground/65">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: SIGNAL_COLORS[key] }} aria-hidden="true" />
-            {SIGNAL_LABELS[key]} {formatWeight(snapshot.active_weights[key])}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export function PublicLiveFeed() {
   const [data, setData] = useState<LoadedPublicFeed | null>(null)
   const [pendingData, setPendingData] = useState<string | null>(null)
@@ -573,6 +558,8 @@ export function PublicLiveFeed() {
           </div>
         ) : null}
 
+        {data !== null ? <FeedPolicyContext snapshot={data.snapshot} /> : null}
+
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground/50">Published feed snapshot</p>
@@ -616,7 +603,6 @@ export function PublicLiveFeed() {
                 </div>
                 <RankColumnHeader label="Rank · score" sublabel={`Epoch ${data.snapshot.epoch_id}`} />
               </div>
-              <PolicyWeights snapshot={data.snapshot} />
               <div className="divide-y divide-[#D9E3EE]">
                 {data.rows.map((row, index) => {
                   const adjacent = {
