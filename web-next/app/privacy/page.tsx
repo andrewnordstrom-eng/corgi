@@ -25,15 +25,16 @@ const SECTIONS = [
     heading: "Data we collect",
     body: (
       <>
-        <P>When you sign in and participate in governance, we collect:</P>
+        <P>Depending on whether you register interest, sign in or participate in governance, we collect:</P>
         <UL>
           <LI><Strong>Your Bluesky DID and handle</Strong> — used to identify your account and associate your vote.</LI>
           <LI><Strong>Vote preferences</Strong> — weight sliders, keyword preferences, topic preferences. These are stored per governance round and used solely to calculate aggregated community weights.</LI>
           <LI><Strong>Research consent status</Strong> — whether you have opted in, opted out, or not yet decided. Stored with a timestamp and version number.</LI>
           <LI><Strong>Session information</Strong> — a server-side session used to authenticate your requests. Expires when you sign out or revoke your app password.</LI>
+          <LI><Strong>Contact interest</Strong> — your email, optional Bluesky handle, selected interests, optional note and contact permission are stored separately from voting applications. We use them to follow up about your selected interests, not as research participation or voting approval. Contact hello@corgi.network to request deletion.</LI>
           <LI><Strong>Waitlist submissions</Strong> — the Bluesky handle and optional note you provide when requesting pilot voting access. The request is retained after it is approved or rejected as part of the governance record; contact us to request its deletion.</LI>
         </UL>
-        <P>We do <Strong>not</Strong> collect your Bluesky password, your post content, your social graph, or any off-platform behaviour.</P>
+        <P>To generate the feed, Corgi processes public Bluesky posts and engagement records, including likes and follows. Signing in uses a Bluesky app password, not your main Bluesky password.</P>
       </>
     ),
   },
@@ -44,7 +45,7 @@ const SECTIONS = [
       <>
         <UL>
           <LI><Strong>Feed governance</Strong> — your votes are aggregated (never exposed individually) to set feed ranking weights for each round.</LI>
-          <LI><Strong>Audit trail</Strong> — operator actions (not participant votes) are logged in the public audit log, including the operator&rsquo;s DID.</LI>
+          <LI><Strong>Audit trail</Strong> — Operator actions are recorded in an audit log. Public access to the audit log is currently paused.</LI>
           <LI><Strong>Research (opt-in only)</Strong> — if you have consented, anonymised interaction data may be shared with academic research partners studying community-governed recommendation systems.</LI>
         </UL>
         <P>We do not sell, rent, or share your personal data with third parties for advertising or commercial purposes.</P>
@@ -56,11 +57,10 @@ const SECTIONS = [
     heading: "What is publicly visible",
     body: (
       <>
-        <P>Corgi is built on a transparency principle. The following is always public:</P>
+        <P>The public feed provides ranking information where available. Some governance pages and APIs are currently paused.</P>
         <UL>
-          <LI>The aggregated weights applied each round (not individual votes).</LI>
-          <LI>The operator audit log (operator DID, action type, timestamp — not vote data).</LI>
-          <LI>Per-post score breakdowns (the math behind why any Corgi-scored post ranked as it did).</LI>
+          <LI>The weights associated with the published feed, where available.</LI>
+          <LI>Per-post score breakdowns for posts that are publicly viewable and have a published receipt.</LI>
         </UL>
         <P><Strong>Your individual vote is never public.</Strong> Aggregate statistics (e.g. total vote count, participation rate) may be surfaced on the dashboard, but cannot be traced back to you.</P>
       </>
@@ -72,6 +72,8 @@ const SECTIONS = [
     body: (
       <>
         <P>Governance votes are retained per round and archived when a round closes. We retain historical round data indefinitely to support the audit trail. You may request deletion of your participation data by contacting us.</P>
+        <P>Contact-interest records do not expire automatically. We retain them unless you request deletion. You can also ask us to stop contacting you about your selected interests.</P>
+        <P>Deleted records may remain in restricted backups until those backups are replaced. If a backup is restored, deletion and contact-withdrawal requests must be reapplied before any contact follow-up.</P>
         <P>Session data is deleted on sign-out or app password revocation.</P>
       </>
     ),
@@ -85,7 +87,8 @@ const SECTIONS = [
         <UL>
           <LI>Access the personal data we hold about you.</LI>
           <LI>Request correction of inaccurate data.</LI>
-          <LI>Request deletion of your participation data and waitlist submission.</LI>
+          <LI>Request deletion of your contact-interest record, participation data and waitlist submission.</LI>
+          <LI>Withdraw permission for contact-interest emails at any time by contacting us.</LI>
           <LI>Withdraw research consent at any time (this does not affect your ability to vote).</LI>
           <LI>Object to or restrict certain processing.</LI>
         </UL>
@@ -134,7 +137,7 @@ export default function PrivacyPage() {
     <AppShell user={null}>
       <LegalLayout
         title="Privacy Policy"
-        lastUpdated="12 July 2026"
+        lastUpdated="28 September 2026"
         sections={SECTIONS}
         backHref="/"
         backLabel="Back to home"
