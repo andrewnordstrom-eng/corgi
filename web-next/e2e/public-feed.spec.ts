@@ -241,7 +241,11 @@ test("is usable while signed out on desktop and mobile", async ({ page }, testIn
   const control: FixtureControl = { snapshotId: "initial", orderedUris: [POST_A, POST_B], appViewMode: "complete", snapshotDelayMs: 0, snapshotStatus: 200 }
   const protectedRequests = await openLoadedFeed(page, control)
   await expect(page.getByText("Post a", { exact: true })).toBeVisible()
-  await expect(page.getByText("Active weights", { exact: true })).toBeVisible()
+  const policy = page.getByRole("region", { name: "How this feed is ranked" })
+  await expect(policy).toBeVisible()
+  await expect(policy).toContainText("Epoch 12 · pilot policy")
+  await expect(policy.getByRole("list", { name: "Active weights" })).toContainText("Engagement 30%")
+  await expect(policy).toContainText("Engagement counts most")
 
   if (testInfo.project.name === "desktop-chrome") {
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible()
@@ -268,6 +272,41 @@ test("supports keyboard-only explanation inspection", async ({ page }, testInfo)
   await expect(page.getByRole("button", { name: "Why this order" }).nth(1)).toHaveAttribute("aria-pressed", "true")
   await expect(page.getByRole("complementary", { name: "Selected post ranking explanation" })).toContainText("Why position 2")
   await expect(page.getByRole("complementary", { name: "Selected post ranking explanation" })).toContainText("Above: position 1")
+})
+
+test("explains the active policy above the feed with a keyboard-operable disclosure", async ({ page }) => {
+  let snapshotRequestCount = 0
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/transparency/feed-snapshot") {
+      snapshotRequestCount += 1
+    }
+  })
+  const control: FixtureControl = { snapshotId: "policy-context", orderedUris: [POST_A, POST_B], appViewMode: "complete", snapshotDelayMs: 0, snapshotStatus: 200 }
+  await page.setViewportSize({ width: 375, height: 900 })
+  await openLoadedFeed(page, control)
+  const policy = page.getByRole("region", { name: "How this feed is ranked" })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  const policyBox = await policy.boundingBox()
+  const firstRowBox = await page.locator("[data-feed-row-uri]").first().boundingBox()
+  expect(policyBox).not.toBeNull()
+  expect(firstRowBox).not.toBeNull()
+  expect(policyBox!.y).toBeLessThan(firstRowBox!.y)
+
+  const toggle = policy.getByRole("button", { name: "How to read this" })
+  const detailsId = await toggle.getAttribute("aria-controls")
+  expect(detailsId).toBeTruthy()
+  const details = page.locator(`[id="${detailsId}"]`)
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(details).toBeHidden()
+  await toggle.focus()
+  await page.keyboard.press("Enter")
+  await expect(policy.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true")
+  await expect(details).toBeVisible()
+  await expect(details).toContainText("Topics are detected by keywords")
+  await page.keyboard.press("Space")
+  await expect(policy.getByRole("button", { name: "How to read this" })).toHaveAttribute("aria-expanded", "false")
+  await expect(details).toBeHidden()
+  expect(snapshotRequestCount).toBe(1)
 })
 
 test("clears the old body while notifying, then accepts a reordered snapshot", async ({ page }, testInfo) => {
