@@ -1,6 +1,16 @@
 # Contributing
 
+Thanks for your interest in Corgi. Outside contributions go through GitHub:
+
+- **Bugs and ideas:** open a [GitHub issue](https://github.com/andrewnordstrom-eng/corgi/issues) first, so we can agree on the change before you write code.
+- **New scoring components:** start with the [component guide](docs/contributing-scoring-components.md).
+- **Security problems:** do not open a public issue. Follow [SECURITY.md](SECURITY.md).
+
+Maintainers also track work in an internal tracker. You don't need access to it; a GitHub issue is enough.
+
 ## Development Setup
+
+Local setup is manual. You need Node.js 22.19 or newer, Docker Compose, and a Bluesky account for the feed identity values marked REQUIRED in `.env.example`. The sandbox demo also needs its own Redis instance; see the [sandbox contract](docs/lab/demo-shadow-governance-contract.md).
 
 1. Install dependencies:
 ```bash
@@ -63,20 +73,19 @@ npm run migrate
 
 ### Branch Naming
 
-- Include the Linear issue ID in branch names.
-- Pattern examples:
-  - `proj-42-implement-int8-matmul`
-  - `lab-17-add-vote-normalization`
+- Include the issue number in branch names.
+- Pattern example: `issue-42-add-vote-normalization`
+- Maintainers use their internal tracker ID instead (for example `dev/PROJ-42-add-vote-normalization`).
 
 ### PR Title and Description
 
 - Use imperative, descriptive titles.
 - PR description must include:
   - what this PR does
-  - why this is needed (with Linear link/context)
+  - why this is needed (link the issue)
   - testing performed
   - reviewer focus areas
-- Include an auto-close keyword for Linear issue tracking (for example: `Fixes PROJ-42` or `Closes LAB-17`).
+- Include an auto-close keyword for the issue (for example: `Fixes #42`).
 
 ### CodeRabbit Review-Fix Loop
 
@@ -88,7 +97,7 @@ npm run migrate
 ### Sensitive Changes
 
 - Security-sensitive changes (auth, input validation, data access) should be isolated in dedicated PRs.
-- Add the `security` label in Linear for security-sensitive work.
+- Never put exploit details in a public issue or PR; report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Adding A Votable Weight
 

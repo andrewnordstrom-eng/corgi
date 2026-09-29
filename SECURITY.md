@@ -13,7 +13,7 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue with exploit details.
-2. Use [GitHub private vulnerability reporting](https://github.com/andrewnordstrom-eng/bluesky-community-feed/security/advisories/new) to submit a report.
+2. Use [GitHub private vulnerability reporting](https://github.com/andrewnordstrom-eng/corgi/security/advisories/new) to submit a report.
 3. Include: reproduction steps, impact assessment, and suggested mitigation.
 4. You will receive an acknowledgment within 48 hours and a resolution timeline within 7 days.
 
