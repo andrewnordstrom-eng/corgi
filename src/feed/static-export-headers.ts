@@ -42,6 +42,26 @@ export function discoverStaticExportHtmlPaths(root: string): ReadonlySet<string>
   return routes;
 }
 
+export function staticExportDocumentRedirect(
+  request: FastifyRequest,
+  htmlDocumentPaths: ReadonlySet<string>,
+): string | undefined {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return undefined;
+  if (request.headers['sec-fetch-dest'] !== 'document'
+    || request.headers['sec-fetch-mode'] !== 'navigate'
+    || request.headers.rsc !== undefined
+    || !acceptsHtml(request)) return undefined;
+
+  const queryStart = request.url.indexOf('?');
+  const pathname = queryStart === -1 ? request.url : request.url.slice(0, queryStart);
+  if (!pathname.endsWith('/index.txt') || pathname.startsWith('//')) return undefined;
+  const documentPath = `${pathname.slice(0, -'index.txt'.length)}index.html`;
+  if (!htmlDocumentPaths.has(documentPath)) return undefined;
+
+  const query = queryStart === -1 ? '' : request.url.slice(queryStart);
+  return `${pathname.slice(0, -'index.txt'.length)}${query}`;
+}
+
 function visitStaticExportDirectory(root: string, relativeDirectory: string, routes: Set<string>): void {
   const absoluteDirectory = path.join(root, relativeDirectory);
   for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {

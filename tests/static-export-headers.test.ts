@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyStaticExportResponseHeaders,
   discoverStaticExportHtmlPaths,
+  staticExportDocumentRedirect,
 } from '../src/feed/static-export-headers.js';
 
 const HTML_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
@@ -25,6 +26,65 @@ afterEach(async () => {
 });
 
 describe('static-export response headers', () => {
+  it('recovers document payload navigation without redirecting RSC or unrelated requests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corgi-document-recovery-'));
+    temporaryDirectories.push(root);
+    await mkdir(join(root, 'feed'));
+    await writeFile(join(root, 'index.html'), '<title>Home</title>');
+    await writeFile(join(root, 'index.txt'), 'home payload');
+    await writeFile(join(root, 'feed', 'index.html'), '<title>Feed</title>');
+    await writeFile(join(root, 'feed', 'index.txt'), 'feed payload');
+    await writeFile(join(root, 'robots.txt'), 'User-agent: *');
+    const paths = discoverStaticExportHtmlPaths(root);
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root, wildcard: false });
+    app.addHook('onRequest', async (request, reply) => {
+      const destination = staticExportDocumentRedirect(request, paths);
+      if (destination !== undefined) {
+        return reply.header('cache-control', 'no-store').redirect(destination);
+      }
+    });
+    const documentHeaders = {
+      accept: HTML_ACCEPT,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+    };
+    try {
+      for (const method of ['GET', 'HEAD'] as const) {
+        const response = await app.inject({ method, url: '/feed/index.txt?filter=a%20b', headers: documentHeaders });
+        expect(response.statusCode).toBe(302);
+        expect(response.headers.location).toBe('/feed/?filter=a%20b');
+        expect(response.headers['cache-control']).toBe('no-store');
+      }
+      const home = await app.inject({ url: '/index.txt', headers: documentHeaders });
+      expect(home.headers.location).toBe('/');
+      const recovered = await app.inject({ url: '/feed/', headers: documentHeaders });
+      expect(recovered.statusCode).toBe(200);
+      expect(recovered.body).toContain('<title>Feed</title>');
+      for (const headers of [
+        { accept: '*/*', 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', rsc: '1' },
+        { ...documentHeaders, rsc: '1' },
+        { ...documentHeaders, 'sec-fetch-dest': 'empty' },
+        { ...documentHeaders, 'sec-fetch-mode': 'cors' },
+        { ...documentHeaders, accept: 'text/html;q=0' },
+        { accept: HTML_ACCEPT },
+      ]) {
+        const response = await app.inject({ url: '/feed/index.txt?_rsc=test', headers });
+        expect(response.statusCode).toBe(200);
+        expect(response.headers.location).toBeUndefined();
+        expect(response.body).toBe('feed payload');
+      }
+      for (const url of ['/robots.txt', '/missing/index.txt', '/api/index.txt', '//outside.example/index.txt']) {
+        const response = await app.inject({ url, headers: documentHeaders });
+        expect(response.headers.location).toBeUndefined();
+      }
+      const post = await app.inject({ method: 'POST', url: '/feed/index.txt', headers: documentHeaders });
+      expect(post.headers.location).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('preserves the HTML CSP and cache policy on conditional 304 responses', async () => {
     const webDistDir = await mkdtemp(join(tmpdir(), 'corgi-static-export-'));
     temporaryDirectories.push(webDistDir);
