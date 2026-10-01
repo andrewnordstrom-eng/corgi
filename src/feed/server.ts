@@ -35,7 +35,7 @@ import {
   type DemoRateLimitGuard,
 } from '../demo/rate-limit.js';
 import { buildRouteRateLimitConfig } from './rate-limit-config.js';
-import { applyStaticExportResponseHeaders, discoverStaticExportHtmlPaths } from './static-export-headers.js';
+import { applyStaticExportResponseHeaders, discoverStaticExportHtmlPaths, staticExportDocumentRedirect } from './static-export-headers.js';
 import packageMetadata from '../../package.json' with { type: 'json' };
 
 // Extend FastifyRequest to include correlationId
@@ -561,6 +561,12 @@ export async function createServer(options?: CreateServerOptions) {
 
     if (webRoutingMode === 'export') {
       const staticExportHtmlPaths = discoverStaticExportHtmlPaths(webDistPath);
+      app.addHook('onRequest', async (request, reply) => {
+        const destination = staticExportDocumentRedirect(request, staticExportHtmlPaths);
+        if (destination !== undefined) {
+          return reply.header('cache-control', 'no-store').redirect(destination);
+        }
+      });
       // Next.js static-export HTML hydrates via inline bootstrap scripts
       // (self.__next_f.push(...)), which the strict global CSP
       // (script-src 'self') blocks — the page would render but never become
