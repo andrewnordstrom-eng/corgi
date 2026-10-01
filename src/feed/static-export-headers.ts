@@ -55,7 +55,19 @@ export function staticExportDocumentRedirect(
   const queryStart = request.url.indexOf('?');
   const pathname = queryStart === -1 ? request.url : request.url.slice(0, queryStart);
   if (!pathname.endsWith('/index.txt') || pathname.startsWith('//')) return undefined;
-  const documentPath = `${pathname.slice(0, -'index.txt'.length)}index.html`;
+  // Decode only for disk-path lookup; never redirect ambiguous path separators.
+  if (/%2f|%5c/i.test(pathname)) return undefined;
+  let decodedPathname: string;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch (error) {
+    if (error instanceof URIError) return undefined;
+    throw error;
+  }
+  if (!decodedPathname.startsWith('/')
+    || /[\\?#\u0000-\u001f\u007f]/.test(decodedPathname)
+    || path.posix.normalize(decodedPathname) !== decodedPathname) return undefined;
+  const documentPath = `${decodedPathname.slice(0, -'index.txt'.length)}index.html`;
   if (!htmlDocumentPaths.has(documentPath)) return undefined;
 
   const query = queryStart === -1 ? '' : request.url.slice(queryStart);

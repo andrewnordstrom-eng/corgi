@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import Fastify from 'fastify';
 import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
@@ -34,6 +35,9 @@ describe('static-export response headers', () => {
     await writeFile(join(root, 'index.txt'), 'home payload');
     await writeFile(join(root, 'feed', 'index.html'), '<title>Feed</title>');
     await writeFile(join(root, 'feed', 'index.txt'), 'feed payload');
+    await mkdir(join(root, 'café'));
+    await writeFile(join(root, 'café', 'index.html'), '<title>Café</title>');
+    await writeFile(join(root, 'café', 'index.txt'), 'café payload');
     await writeFile(join(root, 'robots.txt'), 'User-agent: *');
     const paths = discoverStaticExportHtmlPaths(root);
     const app = Fastify({ logger: false });
@@ -55,6 +59,15 @@ describe('static-export response headers', () => {
         expect(response.statusCode).toBe(302);
         expect(response.headers.location).toBe('/feed/?filter=a%20b');
         expect(response.headers['cache-control']).toBe('no-store');
+        for (const route of ['/f%65ed', '/caf%C3%A9']) {
+          const encoded = await app.inject({ method, url: `${route}/index.txt?filter=a%20b`, headers: documentHeaders });
+          expect(encoded.statusCode).toBe(302);
+          expect(encoded.headers.location).toBe(`${route}/?filter=a%20b`);
+          expect(encoded.headers['cache-control']).toBe('no-store');
+          const rsc = await app.inject({ method, url: `${route}/index.txt`, headers: { ...documentHeaders, rsc: '1' } });
+          expect(rsc.statusCode).toBe(200);
+          expect(rsc.headers.location).toBeUndefined();
+        }
       }
       const home = await app.inject({ url: '/index.txt', headers: documentHeaders });
       expect(home.headers.location).toBe('/');
@@ -77,6 +90,20 @@ describe('static-export response headers', () => {
       for (const url of ['/robots.txt', '/missing/index.txt', '/api/index.txt', '//outside.example/index.txt']) {
         const response = await app.inject({ url, headers: documentHeaders });
         expect(response.headers.location).toBeUndefined();
+      }
+      // Use raw HTTP paths: app.inject normalizes encoded dot segments first.
+      const address = new URL(await app.listen({ host: '127.0.0.1', port: 0 }));
+      for (const url of ['/f%ZZed/index.txt', '/%C3%28/index.txt', '/%2Ffeed/index.txt', '/feed%5C/index.txt', '/%2e/feed/index.txt', '/feed/%2e%2e/feed/index.txt', '/feed//index.txt', '/feed%00/index.txt']) {
+        const headers = await new Promise<IncomingHttpHeaders>((resolve, reject) => {
+          const request = httpRequest({ hostname: address.hostname, port: address.port, path: url, headers: documentHeaders }, (response) => {
+            response.on('error', reject);
+            response.on('end', () => resolve(response.headers));
+            response.resume();
+          });
+          request.on('error', reject);
+          request.end();
+        });
+        expect(headers.location, url).toBeUndefined();
       }
       const post = await app.inject({ method: 'POST', url: '/feed/index.txt', headers: documentHeaders });
       expect(post.headers.location).toBeUndefined();
