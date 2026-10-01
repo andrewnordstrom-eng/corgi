@@ -502,3 +502,40 @@ describe('PROJ-2258 operations principal policy', () => {
     },
   );
 });
+
+describe('PROJ-2258 Phase B workflow boundary', () => {
+  const workflowPath = path.join(REPO_ROOT, '.github', 'workflows', 'daily-health.yml');
+
+  it('binds daily operations to the main-only operations environment and distinct secrets', () => {
+    const workflow = readFileSync(workflowPath, 'utf8');
+    expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
+    expect(workflow).toContain('environment: production-operations');
+    const secrets = Array.from(workflow.matchAll(/secrets\.([A-Z_]+)/g), (match) => match[1]);
+    expect([...new Set(secrets)].sort()).toEqual([
+      'HEALTHCHECK_PING_URL',
+      'PRODUCTION_OPERATIONS_DATABASE_URL',
+      'PRODUCTION_OPERATIONS_HOST',
+      'PRODUCTION_OPERATIONS_SSH_HOST_KEY',
+      'PRODUCTION_OPERATIONS_SSH_KEY',
+    ]);
+    expect(workflow).not.toContain('secrets.VPS_USER');
+    expect(workflow).not.toContain('docker exec');
+    expect(workflow).not.toContain('accept-new');
+    expect(workflow).not.toContain('DB_Q');
+  });
+
+  it('uses valid Bash for the actual bounded operations step', () => {
+    const workflow = readFileSync(workflowPath, 'utf8');
+    const match = workflow.match(
+      /^      - name: Check operations on VPS\n[\s\S]*?^        run: \|\n([\s\S]*?)(?=^      - name:)/m,
+    );
+    expect(match).not.toBeNull();
+    const script = match![1].split('\n').map((line) => line.slice(10)).join('\n');
+    const result = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8', timeout: 5_000 });
+    assertSpawnCompleted(result);
+    expect(result.status, result.stderr).toBe(0);
+    expect(script).toContain('printf \'%s\\n\' "$DATABASE_URL" | timeout');
+    expect(script).toContain('unset DATABASE_URL');
+    expect(script).toContain('trap \'rm -f -- "$ssh_dir/id_ed25519"');
+  });
+});

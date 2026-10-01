@@ -1,7 +1,8 @@
 # Least-privilege scheduled operations principal
 
-Status: PROJ-2258 Phase A design packet. Nothing in this document authorizes a
-production connection or mutation.
+Status: Phase A merged; Phase B repository candidate in preparation. Production
+installation, credentials, environment changes and workflow enablement still
+require their separate approval and acceptance.
 
 ## Decision
 
@@ -145,8 +146,8 @@ retired while weekly export remains red.
 
 ## Phase B verification matrix
 
-`ops/provision-corgi-operations-principal.sh apply PUBLIC_KEY_FILE` is the only
-installation vehicle. It is idempotent: a repeated run validates the existing
+`ops/provision-corgi-operations-principal.sh apply PUBLIC_KEY_FILE` is the
+account and forced-command installation vehicle. It is idempotent: a repeated run validates the existing
 account shape, overwrites only the four managed files with reviewed content,
 validates sudoers before installation, and reruns local policy verification.
 
@@ -207,11 +208,10 @@ is no longer available to a runnable job. The host script then checks active
 processes, system and user unit directories, system crontabs, and per-user cron
 spools before removing anything.
 
-No current repository workflow, service unit, or cron definition references
-`corgi-operations`; it is a new principal. Because Phase A does not inspect the
-production host, the script rechecks processes and host schedules immediately
-before rollback rather than claiming unseen host state. Phase B must record
-that dependency check in its receipt.
+The Phase B daily-health candidate references `corgi-operations`; callers must
+be quiesced before rollback. The script rechecks processes and host schedules
+immediately before rollback. Phase B must record that dependency check in its
+receipt.
 
 ## Phase boundary and receipt
 
@@ -226,6 +226,102 @@ Phase B requires a new explicit founder approval. Its receipt must record the
 reviewed commit SHA, key fingerprint, account and file modes, allow/deny test
 results, environment policies, secret names only, workflow run URLs and SHAs,
 and rollback dependency check. It must never record secret values.
+
+## Phase B repository candidate
+
+The local implementation approval covers the database scripts, the two-file CLI
+installer, daily health, their tests and this receipt directory. It does not
+activate the workflow or authorize host writes. Evidence and reproducible
+rehearsals live under `ops/receipts/2026-09-08/PROJ-2258/`.
+
+### Database privileges
+
+Run the SQL through `psql -X` only after approval against `bluesky_feed` as its
+existing privileged operator. `provision-corgi-operations-database.sql` stops on
+a changed role inventory, PUBLIC database/schema baseline, PUBLIC user-table
+or sequence grants, schema CREATE, or public security-definer access. It
+creates `corgi_operations` as NOLOGIN with two connections maximum, no elevated
+attributes or memberships, and SELECT on exactly the two epoch-status tables.
+Removing PUBLIC TEMPORARY closes an inherited privilege; the inspected `feed`
+superuser retains effective TEMP access. Statement, lock and idle-transaction
+timeouts and read-only defaults provide additional limits. ACLs remain the
+security boundary, since a session can override its own defaults.
+
+The SQL does not generate a password or enable LOGIN. Dedicated TCP credential
+creation and authentication acceptance remain a separate approved step.
+`rollback-corgi-operations-database.sql` requires callers to be quiesced and
+LOGIN already disabled in a committed transaction. It refuses active sessions
+or changed baseline privileges, revokes only this role's explicit grants,
+drops the role without CASCADE, and restores the inspected PUBLIC TEMPORARY
+privilege. Unexpected dependencies abort the entire transaction.
+
+### Two-file CLI installer and recovery
+
+The old CLI source `2892597cf9f352f0d941b9734d366b867b2ffcdd` reproduces all 42
+installed files. Reviewed source `b51266cc1738ed90457d132ff66925a8bd10aad3`
+changes only `direct.js` and `direct.js.map`; all 40 other files match. The
+installer pins both complete manifest digests independently of the transferred
+packet. It never trusts an uploaded manifest to declare its own digest.
+
+Before any invocation, authenticate the installer itself against the separately
+approved workstation digest. Stage it and the two manifests and artifacts under
+root-owned, non-writable ancestry (for example a new `/root/` staging directory).
+Packet files must be root-owned mode 0644. The fixed live path is
+`/opt/bluesky-feed/cli/dist`; its files must retain the inspected deployment UID
+and GID 1001 and mode 0644, with directory mode 0755. Requalify these values if
+the deployment account or artifacts change. The installer does not accept a
+caller-selected destination or change dependencies.
+
+`python3 install-corgi-operations-cli.py apply /root/APPROVED-PACKET` performs the
+one-time replacement. It holds both an operations lock and the existing
+`/opt/bluesky-feed/.git/corgi-deploy-receipts/production.lock` used by the deploy
+workflow. A missing, unsafe or busy deployment lock stops before artifact
+replacement; its creation is outside this installer. Quiesce CLI callers and
+confirm no unresolved deployment receipt before the approved host invocation.
+The manifest checks do not replace those operational checks.
+
+Protected original files and a durable state marker are retained in
+`/var/lib/corgi-operations-cli-patch` (root, 0700; files 0600), outside the
+operations account home. Both originals are checked before arming rollback.
+Each live replacement uses a same-directory temporary file, fsync and atomic
+rename, source map first and executable JavaScript last. Symlinks, hardlinks,
+unknown inventory and digest drift fail closed. The pair is not one atomic
+filesystem operation; the durable recovery state covers interruption between
+them. No service restart or full application deployment occurs.
+
+`verify` with the same packet checks the terminal state and all 42 live files.
+`rollback` authenticates both original backups, accepts only baseline/candidate
+combinations in the two changed paths, restores map then JavaScript, and verifies
+the entire baseline. It also handles a partial scratch write or a killed rollback.
+A pre-arming interruption verifies an unchanged live baseline and reports
+`preparation_abandoned`; it retains the incomplete recovery evidence. Unknown
+live drift or damaged armed backups stops for operator reconciliation. A repeated
+apply always refuses existing recovery state; a completed rollback can be
+verified repeatedly. Recovery evidence is never automatically deleted.
+
+### Workflow activation ordering
+
+The daily-health candidate runs only from `main` and references the future
+`production-operations` environment. It uses the fixed user and four exact SSH
+tokens, dedicated secret names, strict pre-established host identity, bounded
+SSH calls and an ephemeral credential directory removed on shell exit. The
+DB URL is sent only on stdin and then unset. Permission/transport/Redis errors,
+invalid timestamps and stale feed data fail; only a successful empty GET keeps
+the existing missing-data warning.
+
+Do not merge this binding until host acceptance, the environment's main-only
+policy and its dedicated secrets are ready. GitHub can create an unprotected
+environment when a workflow first references a missing name, so the separate
+control-plane implementation and live parity verification must precede merge.
+The current private desired-state schema cannot yet represent this two-environment
+split; it needs its own approved path scope. The emergency-only main freeze
+remains enforced.
+
+Weekly export stays on its existing binding until PROJ-2261's fixed-purpose
+replacement passes production-shaped acceptance. Production deployment stays
+disabled. Keep repository-scoped secrets until all consumers pass their required
+runs and a separate retirement approval exists. This intermediate candidate
+cannot close PROJ-2258 or lift PROJ-2087's freeze.
 
 ## Sources
 
