@@ -14,7 +14,7 @@
   "dependencies": {
     "@emotion/is-prop-valid": "1.4.0",
     "@tanstack/react-query": "^5.101.0",
-    "axios": "1.19.0",
+    "axios": "1.20.0",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -80,7 +80,9 @@
   "overrides": {
     "js-yaml": "4.3.2",
     "postcss": "8.5.26",
-    "sharp": "0.35.4"
+    "sharp": "0.35.4",
+    "brace-expansion@1": "1.1.21",
+    "brace-expansion@5": "5.0.12"
   },
   "engines": {
     "node": "^22.19.0",
