@@ -1,0 +1,302 @@
+{
+  "base_sha": "c9833d1ca1e7114212eabd7510c3b469ddd0b6cb",
+  "previous_pr_head": "888f0af0239d440e1471a8e57a9c0feb74ecf042",
+  "implementation_patch_sha256": "130d91d36e92eaf263a7aeddcdc9f38934853af674d73c96bafbaee3db9a4fd1",
+  "implementation_files": [
+    {
+      "path": ".github/workflows/deploy.yml",
+      "sha256": "742801371aff1da88352c493d0cbda39ffacda3888989d9ee9c95ac4ba94f6d8"
+    },
+    {
+      "path": "docs/agent/REPO_CONTRACT.md",
+      "sha256": "32a7b8bc154d8138886ee528746cb5e8d376e4f6f97344d4e2e1d95acaf89ecb"
+    },
+    {
+      "path": "tests/demo-shadow-isolation.test.ts",
+      "sha256": "6f2927249be2c16e35445edbac9fcc517b7312920f72a404f12ac21d992a04e1"
+    }
+  ],
+  "runtime": {
+    "node": "20.19.0",
+    "npm": "10.8.2",
+    "platform": "darwin-arm64"
+  },
+  "installs": [
+    {
+      "workspace": "root",
+      "command": "npm ci --ignore-scripts",
+      "exit_code": 0,
+      "log_sha256": "db3f249907aafad95e36560a86a8b95d8a5fb16d841c35ca942fb660261ee088"
+    },
+    {
+      "workspace": "cli",
+      "command": "npm ci --ignore-scripts",
+      "exit_code": 0,
+      "log_sha256": "2181ee4f978b2234ad7a9de6f2c96e83be399943d5058c1dd957c567b00a05c1"
+    },
+    {
+      "workspace": "web",
+      "command": "npm ci --ignore-scripts",
+      "exit_code": 0,
+      "log_sha256": "42c6590ed4f915f3f28f96a7df5978bfe275023585e516040e781862e8ec571b"
+    },
+    {
+      "workspace": "web-next",
+      "command": "npm ci --ignore-scripts",
+      "exit_code": 0,
+      "log_sha256": "cccb749d1c8418a45fff18cd730102ee620da221b2bc37b17dc62f87db2eda2d"
+    }
+  ],
+  "audits": [
+    {
+      "name": "audit-root",
+      "cwd": "/private/tmp/proj-2277-corgi",
+      "command": [
+        "node",
+        "/private/tmp/proj-2277-corgi/scripts/audit-allowlist.mjs",
+        "--workspace=root",
+        "--audit-level=moderate"
+      ],
+      "exit_code": 0,
+      "started_unix": 1789429248.318752,
+      "duration_seconds": 0.558,
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/audit-root.log",
+      "log_sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "name": "audit-cli",
+      "cwd": "/private/tmp/proj-2277-corgi/cli",
+      "command": [
+        "node",
+        "/private/tmp/proj-2277-corgi/scripts/audit-allowlist.mjs",
+        "--workspace=cli",
+        "--audit-level=moderate"
+      ],
+      "exit_code": 0,
+      "started_unix": 1789429248.8771148,
+      "duration_seconds": 0.407,
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/audit-cli.log",
+      "log_sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "name": "audit-web",
+      "cwd": "/private/tmp/proj-2277-corgi/web",
+      "command": [
+        "node",
+        "/private/tmp/proj-2277-corgi/scripts/audit-allowlist.mjs",
+        "--workspace=web",
+        "--audit-level=moderate"
+      ],
+      "exit_code": 0,
+      "started_unix": 1789429249.28411,
+      "duration_seconds": 0.457,
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/audit-web.log",
+      "log_sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    },
+    {
+      "name": "audit-web-next",
+      "cwd": "/private/tmp/proj-2277-corgi/web-next",
+      "command": [
+        "node",
+        "/private/tmp/proj-2277-corgi/scripts/audit-allowlist.mjs",
+        "--workspace=web-next",
+        "--audit-level=moderate"
+      ],
+      "exit_code": 0,
+      "started_unix": 1789429249.741249,
+      "duration_seconds": 0.503,
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/audit-web-next.log",
+      "log_sha256": "1c53a06641dc10f5131af21de99655a976ef44941fb46c4eaadcd0c45bc83dcf"
+    }
+  ],
+  "full_verify": {
+    "name": "verify",
+    "cwd": "/private/tmp/proj-2277-corgi",
+    "command": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "exit_code": 0,
+    "started_unix": 1789430492.692349,
+    "duration_seconds": 23.915,
+    "log_path": "/private/tmp/corgi-2277-validation-sep14/verify.log",
+    "log_sha256": "30bbcbdacc1c33939a03f517ad161266ecc060a3ab12fbe07a02eaadf98a90e1",
+    "counts": {
+      "test_files_passed": 159,
+      "tests_passed": 2298,
+      "tests_skipped": 1
+    }
+  },
+  "qa": {
+    "command": [
+      "node",
+      "node_modules/vitest/vitest.mjs",
+      "run",
+      "tests/audit-allowlist-script.test.ts",
+      "tests/demo-shadow-isolation.test.ts"
+    ],
+    "sourcePatchSha256Before": "130d91d36e92eaf263a7aeddcdc9f38934853af674d73c96bafbaee3db9a4fd1",
+    "sourcePatchSha256After": "130d91d36e92eaf263a7aeddcdc9f38934853af674d73c96bafbaee3db9a4fd1",
+    "expectedParentHash": "130d91d36e92eaf263a7aeddcdc9f38934853af674d73c96bafbaee3db9a4fd1",
+    "sourceStableDuringRun": true,
+    "exitCode": 0,
+    "counts": {
+      "testFilesPassed": 2,
+      "testsPassed": 458
+    },
+    "logPath": "/private/tmp/corgi-2277-validation-sep14/qa-final-focused.log",
+    "logSha256": "beed4b3085349c43c8bc1fcf5ef5ef6c602a487bcda80b0af2b9c2166e294f98",
+    "passScope": "Canonical audit wrapper and deployment/CI audit policy regression coverage, including bounded job ordering, job-level bypass rejection, and literal-false continue-on-error coverage.",
+    "limitations": [
+      "No production deployment, merge, credentials, or active advisory exception approval."
+    ],
+    "command_normalization": "Executable recorded as node for portability; runtime.node records the exact version used. Log and source hashes remain unchanged."
+  },
+  "dependency_identity": [
+    {
+      "path": "package.json",
+      "sha256": "3ae979fb8fd211f37c3351b5f3fdba0b9109644feb5bf679ed4869c109691faa",
+      "matches_main": true
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "8e0c6b55e29031d4f016870a70bc471a7bfd79000cd3c9b35ac867e7aee228cb",
+      "matches_main": true
+    },
+    {
+      "path": "cli/package.json",
+      "sha256": "9c6de74e38a87157495faf55c74d9e8d8da256b7d77276a452f5fe181eb351ef",
+      "matches_main": true
+    },
+    {
+      "path": "cli/package-lock.json",
+      "sha256": "6cb9babed6ed7b01e033a18b8dfe5d7199910a744819e06e2a0fc7879546ba96",
+      "matches_main": true
+    },
+    {
+      "path": "web/package.json",
+      "sha256": "b4cea740428ca93c7c12096124d7e610556b50e2df6fb75fbed0c2cda08f589b",
+      "matches_main": true
+    },
+    {
+      "path": "web/package-lock.json",
+      "sha256": "3ca27900d8d929f76b1ab2811d57b49eafcde8c39643dc6529f3ff80d90620d5",
+      "matches_main": true
+    },
+    {
+      "path": "web-next/package.json",
+      "sha256": "d1b101d650480d534f54abecdfd2de4b526ea24d1d2ec1cf0078567605ac55f4",
+      "matches_main": true
+    },
+    {
+      "path": "web-next/package-lock.json",
+      "sha256": "2610921b172ef5e7bcf97313370811aa0844ef2b2456a56d01e69c38094ee576",
+      "matches_main": true
+    },
+    {
+      "path": "scripts/audit-allowlist.mjs",
+      "sha256": "8279603234edd2284d4bbf24f2969940ae2d1c9bfbf298f6eff1d20f04c9bc8e",
+      "matches_main": true
+    }
+  ],
+  "runtime_observations": {
+    "root_engine_warning_count": 16,
+    "actual_tree_npm_ls_exit": 1,
+    "virtual_tree_npm_ls_exit": 0,
+    "tracking_issue": "PROJ-2228"
+  },
+  "production_qualified": false,
+  "schema_version": 1,
+  "recorded_date": "2026-09-14",
+  "status": "locally-validated-pre-publication",
+  "evidence_ownership": {
+    "parent": "Installed dependencies, four live audits, full verification, source inspection, dependency identity and npm actual/virtual diagnostics.",
+    "integration": "Independent bounded source review.",
+    "qa": "Expectations declared before validation; independent focused test execution and source hash verification."
+  },
+  "limitations": [
+    "Local darwin-arm64 validation is not production Linux image qualification.",
+    "Hosted current-head CI and substantive review are pending publication.",
+    "No main merge, freeze change, production operation or active advisory exception.",
+    "Earlier failed fixture and literal-false attempts are superseded by the recorded passing run; source review alone did not catch the latter regression.",
+    "Raw logs reside in a temporary local evidence directory; hashes identify them but do not guarantee retention. Commands are rerunnable."
+  ],
+  "review_dispositions": [
+    {
+      "finding": "Audit job-level suppression could bypass the CI contract guard.",
+      "disposition": "Fixed with line-oriented job-body checks; reject any if property and any continue-on-error value other than literal false. Positive and negative focused tests pass."
+    },
+    {
+      "finding": "Root lockfile should carry overrides metadata.",
+      "disposition": "Not applied: npm 10.8.2 Arborist shrinkwrap.js pkgMetaKeys lines85-105 excludes overrides. All manifests and lockfiles match integrated main, fresh installs succeed, virtual dependency tree validates, resolved patched versions match. Actual-tree adm-zip diagnostic retained in runtime issue."
+    },
+    {
+      "finding": "Frontend overrides must be verified in frontend install context.",
+      "disposition": "Verified directly with npm ci --ignore-scripts from web-next; locked js-yaml4.3.2 and sharp0.35.4; canonical frontend audit passes."
+    },
+    {
+      "finding": "Job guard must reject null/numeric/expressions and preserve literal false.",
+      "disposition": "Fixed. An intermediate regex failed the positive test; replaced with direct line/value comparison and reran full and focused suites."
+    },
+    {
+      "finding": "Job-level controls after the step list escape header-only scan.",
+      "disposition": "Scan the entire bounded expected job at four-space property indentation; regression cases cover post-step if:false and continue-on-error:true for both jobs."
+    }
+  ],
+  "local_review_rounds": [
+    {
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/coderabbit-local.log",
+      "log_sha256": "dda55fd64577750056f99cc26751bf6b3273a0f017c167ab3225b0c2f366e310",
+      "completion": {
+        "type": "complete",
+        "status": "review_completed",
+        "findings": 4,
+        "reviewedFiles": [
+          ".github/workflows/deploy.yml",
+          "docs/agent/REPO_CONTRACT.md",
+          "ops/receipts/2026-09-09/PROJ-2277/adm-zip-decision-proposal.json",
+          "ops/receipts/2026-09-09/PROJ-2277/review-disposition.json",
+          "ops/receipts/2026-09-09/PROJ-2277/validation-receipt.md",
+          "ops/receipts/2026-09-09/PROJ-2277/validation-summary.json",
+          "tests/demo-shadow-isolation.test.ts",
+          "ops/receipts/2026-09-09/PROJ-2275/dependency-version-changes.json",
+          "ops/receipts/2026-09-09/PROJ-2275/patch-validation-receipt-2026-09-12.md",
+          "ops/receipts/2026-09-09/PROJ-2275/patch-validation-summary-2026-09-12.json",
+          "ops/receipts/2026-09-09/PROJ-2275/production-audits.json",
+          "ops/receipts/2026-09-09/PROJ-2275/validation-receipt.md",
+          "ops/receipts/2026-09-09/PROJ-2275/validation-summary.json",
+          "package-lock.json",
+          "package.json",
+          "web-next/package-lock.json",
+          "web-next/package.json"
+        ]
+      }
+    },
+    {
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/coderabbit-followup.log",
+      "log_sha256": "bebd92a9b1b1fcc9c6c49b5f3a10fd08fc743b9c103f70d016c2ddc662c29c73",
+      "completion": {
+        "type": "complete",
+        "status": "review_completed",
+        "findings": 2,
+        "reviewedFiles": [
+          "tests/demo-shadow-isolation.test.ts"
+        ]
+      }
+    },
+    {
+      "log_path": "/private/tmp/corgi-2277-validation-sep14/coderabbit-final.log",
+      "log_sha256": "0f18a565b18a9ae6be540f9f68d49373229c60d92436658846d153a97b713083",
+      "completion": {
+        "type": "complete",
+        "status": "review_completed",
+        "findings": 2,
+        "reviewedFiles": [
+          "tests/demo-shadow-isolation.test.ts"
+        ]
+      }
+    }
+  ],
+  "local_review_scope": "CodeRabbit reviewed the implementation candidate and subsequent test snapshots. Review findings were fixed or dispositioned; the final fixes were independently tested. These rounds are not exact-final-commit hosted approval."
+}
